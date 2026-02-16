@@ -1,19 +1,19 @@
 mod common;
 
 use common::{append_n, counter_reducer};
-use eventfold::{EventLog, Snapshot, View, ViewOps};
+use eventfold::{EventLog, Snapshot, View};
 use tempfile::tempdir;
 
 #[test]
 fn test_basic_rotation() {
     let dir = tempdir().unwrap();
-    let mut log = EventLog::open(dir.path()).unwrap();
+    let mut log = EventLog::builder(dir.path())
+        .view::<u64>("counter", counter_reducer)
+        .open()
+        .unwrap();
     append_n(&mut log, 10);
 
-    let mut view: View<u64> = View::new("counter", counter_reducer, log.views_dir());
-    view.refresh(&log).unwrap();
-
-    log.rotate(&mut [&mut view as &mut dyn ViewOps]).unwrap();
+    log.rotate().unwrap();
 
     assert_eq!(log.active_log_size().unwrap(), 0);
     assert!(log.archive_path().exists());
@@ -22,12 +22,13 @@ fn test_basic_rotation() {
 #[test]
 fn test_archive_contains_events() {
     let dir = tempdir().unwrap();
-    let mut log = EventLog::open(dir.path()).unwrap();
+    let mut log = EventLog::builder(dir.path())
+        .view::<u64>("counter", counter_reducer)
+        .open()
+        .unwrap();
     append_n(&mut log, 5);
 
-    let mut view: View<u64> = View::new("counter", counter_reducer, log.views_dir());
-    view.refresh(&log).unwrap();
-    log.rotate(&mut [&mut view as &mut dyn ViewOps]).unwrap();
+    log.rotate().unwrap();
 
     let events: Vec<_> = log
         .read_full()
@@ -40,12 +41,13 @@ fn test_archive_contains_events() {
 #[test]
 fn test_view_offsets_reset_after_rotation() {
     let dir = tempdir().unwrap();
-    let mut log = EventLog::open(dir.path()).unwrap();
+    let mut log = EventLog::builder(dir.path())
+        .view::<u64>("counter", counter_reducer)
+        .open()
+        .unwrap();
     append_n(&mut log, 5);
 
-    let mut view: View<u64> = View::new("counter", counter_reducer, log.views_dir());
-    view.refresh(&log).unwrap();
-    log.rotate(&mut [&mut view as &mut dyn ViewOps]).unwrap();
+    log.rotate().unwrap();
 
     let snap: Snapshot<u64> =
         eventfold::snapshot::load(&log.views_dir().join("counter.snapshot.json"))
@@ -57,28 +59,32 @@ fn test_view_offsets_reset_after_rotation() {
 #[test]
 fn test_view_state_unchanged_after_rotation() {
     let dir = tempdir().unwrap();
-    let mut log = EventLog::open(dir.path()).unwrap();
+    let mut log = EventLog::builder(dir.path())
+        .view::<u64>("counter", counter_reducer)
+        .open()
+        .unwrap();
     append_n(&mut log, 5);
 
-    let mut view: View<u64> = View::new("counter", counter_reducer, log.views_dir());
-    view.refresh(&log).unwrap();
-    let state_before = *view.state();
+    log.refresh_all().unwrap();
+    let state_before = *log.view::<u64>("counter").unwrap();
 
-    log.rotate(&mut [&mut view as &mut dyn ViewOps]).unwrap();
+    log.rotate().unwrap();
 
-    assert_eq!(*view.state(), state_before);
-    assert_eq!(*view.state(), 5);
+    let state_after = *log.view::<u64>("counter").unwrap();
+    assert_eq!(state_after, state_before);
+    assert_eq!(state_after, 5);
 }
 
 #[test]
 fn test_post_rotation_appends() {
     let dir = tempdir().unwrap();
-    let mut log = EventLog::open(dir.path()).unwrap();
+    let mut log = EventLog::builder(dir.path())
+        .view::<u64>("counter", counter_reducer)
+        .open()
+        .unwrap();
     append_n(&mut log, 5);
 
-    let mut view: View<u64> = View::new("counter", counter_reducer, log.views_dir());
-    view.refresh(&log).unwrap();
-    log.rotate(&mut [&mut view as &mut dyn ViewOps]).unwrap();
+    log.rotate().unwrap();
 
     append_n(&mut log, 5);
     let events: Vec<_> = log
@@ -92,29 +98,30 @@ fn test_post_rotation_appends() {
 #[test]
 fn test_post_rotation_refresh() {
     let dir = tempdir().unwrap();
-    let mut log = EventLog::open(dir.path()).unwrap();
+    let mut log = EventLog::builder(dir.path())
+        .view::<u64>("counter", counter_reducer)
+        .open()
+        .unwrap();
     append_n(&mut log, 5);
 
-    let mut view: View<u64> = View::new("counter", counter_reducer, log.views_dir());
-    view.refresh(&log).unwrap();
-    log.rotate(&mut [&mut view as &mut dyn ViewOps]).unwrap();
+    log.rotate().unwrap();
 
     append_n(&mut log, 3);
-    view.refresh(&log).unwrap();
-    assert_eq!(*view.state(), 8);
+    log.refresh_all().unwrap();
+    assert_eq!(*log.view::<u64>("counter").unwrap(), 8);
 }
 
 #[test]
 fn test_multiple_rotations() {
     let dir = tempdir().unwrap();
-    let mut log = EventLog::open(dir.path()).unwrap();
-
-    let mut view: View<u64> = View::new("counter", counter_reducer, log.views_dir());
+    let mut log = EventLog::builder(dir.path())
+        .view::<u64>("counter", counter_reducer)
+        .open()
+        .unwrap();
 
     for _ in 0..3 {
         append_n(&mut log, 5);
-        view.refresh(&log).unwrap();
-        log.rotate(&mut [&mut view as &mut dyn ViewOps]).unwrap();
+        log.rotate().unwrap();
     }
 
     let events: Vec<_> = log
@@ -128,14 +135,14 @@ fn test_multiple_rotations() {
 #[test]
 fn test_read_full_after_rotations() {
     let dir = tempdir().unwrap();
-    let mut log = EventLog::open(dir.path()).unwrap();
-
-    let mut view: View<u64> = View::new("counter", counter_reducer, log.views_dir());
+    let mut log = EventLog::builder(dir.path())
+        .view::<u64>("counter", counter_reducer)
+        .open()
+        .unwrap();
 
     for _ in 0..3 {
         append_n(&mut log, 5);
-        view.refresh(&log).unwrap();
-        log.rotate(&mut [&mut view as &mut dyn ViewOps]).unwrap();
+        log.rotate().unwrap();
     }
 
     // Append more to active log (not rotated)
@@ -152,12 +159,12 @@ fn test_read_full_after_rotations() {
 #[test]
 fn test_new_view_after_rotation() {
     let dir = tempdir().unwrap();
-    let mut log = EventLog::open(dir.path()).unwrap();
-
-    let mut view: View<u64> = View::new("counter", counter_reducer, log.views_dir());
+    let mut log = EventLog::builder(dir.path())
+        .view::<u64>("counter", counter_reducer)
+        .open()
+        .unwrap();
     append_n(&mut log, 5);
-    view.refresh(&log).unwrap();
-    log.rotate(&mut [&mut view as &mut dyn ViewOps]).unwrap();
+    log.rotate().unwrap();
 
     append_n(&mut log, 3);
 
@@ -172,7 +179,7 @@ fn test_empty_log_rotation_noop() {
     let dir = tempdir().unwrap();
     let mut log = EventLog::open(dir.path()).unwrap();
 
-    log.rotate(&mut []).unwrap();
+    log.rotate().unwrap();
 
     assert!(!log.archive_path().exists());
     assert_eq!(log.active_log_size().unwrap(), 0);
@@ -184,7 +191,7 @@ fn test_rotation_with_no_views() {
     let mut log = EventLog::open(dir.path()).unwrap();
     append_n(&mut log, 5);
 
-    log.rotate(&mut []).unwrap();
+    log.rotate().unwrap();
 
     assert!(log.archive_path().exists());
     assert_eq!(log.active_log_size().unwrap(), 0);
@@ -193,17 +200,17 @@ fn test_rotation_with_no_views() {
 #[test]
 fn test_full_replay_matches_incremental() {
     let dir = tempdir().unwrap();
-    let mut log = EventLog::open(dir.path()).unwrap();
-
-    let mut view: View<u64> = View::new("counter", counter_reducer, log.views_dir());
+    let mut log = EventLog::builder(dir.path())
+        .view::<u64>("counter", counter_reducer)
+        .open()
+        .unwrap();
 
     append_n(&mut log, 5);
-    view.refresh(&log).unwrap();
-    log.rotate(&mut [&mut view as &mut dyn ViewOps]).unwrap();
+    log.rotate().unwrap();
 
     append_n(&mut log, 3);
-    view.refresh(&log).unwrap();
-    let incremental_state = *view.state();
+    log.refresh_all().unwrap();
+    let incremental_state = *log.view::<u64>("counter").unwrap();
 
     // Create new view (full replay via read_full)
     let mut full_view: View<u64> = View::new("full_counter", counter_reducer, log.views_dir());

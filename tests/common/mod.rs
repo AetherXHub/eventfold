@@ -1,6 +1,7 @@
 #![allow(dead_code)]
 
-use eventfold::{Event, EventLog};
+use eventfold::Event;
+use eventfold::EventLog;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
@@ -58,5 +59,17 @@ pub fn todo_reducer(mut state: TodoState, event: &Event) -> TodoState {
         }
         _ => {}
     }
+    state
+}
+
+#[derive(Default, Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct StatsState {
+    pub event_count: u64,
+    pub last_event_type: String,
+}
+
+pub fn stats_reducer(mut state: StatsState, event: &Event) -> StatsState {
+    state.event_count += 1;
+    state.last_event_type = event.event_type.clone();
     state
 }

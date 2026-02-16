@@ -1,6 +1,9 @@
 use crate::archive;
 use crate::event::Event;
-use crate::view::ViewOps;
+use crate::view::{ReduceFn, View, ViewOps};
+use serde::de::DeserializeOwned;
+use serde::Serialize;
+use std::collections::HashMap;
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, BufRead, BufReader, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
@@ -14,6 +17,79 @@ pub struct EventLog {
     archive_path: PathBuf,
     file: File,
     views_dir: PathBuf,
+    views: HashMap<String, Box<dyn ViewOps>>,
+    max_log_size: u64,
+}
+
+/// A factory closure that creates a boxed view given a views directory path.
+type ViewFactory = Box<dyn FnOnce(&Path) -> Box<dyn ViewOps>>;
+
+/// Builder for configuring and opening an `EventLog`.
+pub struct EventLogBuilder {
+    dir: PathBuf,
+    max_log_size: u64,
+    view_factories: Vec<ViewFactory>,
+}
+
+impl EventLogBuilder {
+    /// Set the maximum active log size in bytes before auto-rotation triggers.
+    /// A value of 0 (the default) disables auto-rotation.
+    pub fn max_log_size(mut self, bytes: u64) -> Self {
+        self.max_log_size = bytes;
+        self
+    }
+
+    /// Register a view with the given name and reducer function.
+    pub fn view<S>(mut self, name: &str, reducer: ReduceFn<S>) -> Self
+    where
+        S: Serialize + DeserializeOwned + Default + Clone + 'static,
+    {
+        let name = name.to_string();
+        self.view_factories.push(Box::new(move |views_dir| {
+            Box::new(View::new(&name, reducer, views_dir))
+        }));
+        self
+    }
+
+    /// Open (or create) the event log with the configured settings.
+    ///
+    /// Creates the directory structure, initializes all registered views,
+    /// and performs auto-rotation if the active log exceeds `max_log_size`.
+    pub fn open(self) -> io::Result<EventLog> {
+        let dir = self.dir;
+        let views_dir = dir.join("views");
+        let log_path = dir.join("app.jsonl");
+        let archive_path = dir.join("archive.jsonl.zst");
+
+        fs::create_dir_all(&views_dir)?;
+
+        let file = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&log_path)?;
+
+        let mut views = HashMap::new();
+        for factory in self.view_factories {
+            let view = factory(&views_dir);
+            views.insert(view.view_name().to_string(), view);
+        }
+
+        let mut log = EventLog {
+            dir,
+            log_path,
+            archive_path,
+            file,
+            views_dir,
+            views,
+            max_log_size: self.max_log_size,
+        };
+
+        if log.max_log_size > 0 && log.active_log_size()? >= log.max_log_size {
+            log.rotate()?;
+        }
+
+        Ok(log)
+    }
 }
 
 /// Compute xxh64 hash of raw line bytes (without trailing newline), hex-encoded.
@@ -46,19 +122,36 @@ impl EventLog {
             archive_path,
             file,
             views_dir,
+            views: HashMap::new(),
+            max_log_size: 0,
         })
+    }
+
+    /// Create a builder for configuring and opening an event log.
+    pub fn builder(dir: impl AsRef<Path>) -> EventLogBuilder {
+        EventLogBuilder {
+            dir: dir.as_ref().to_path_buf(),
+            max_log_size: 0,
+            view_factories: Vec::new(),
+        }
     }
 
     /// Append an event to the active log.
     ///
     /// Serializes the event as a single JSON line, appends it to `app.jsonl`,
     /// and flushes to disk. Returns the byte offset where the event starts.
+    /// May trigger auto-rotation if `max_log_size` is configured and exceeded.
     pub fn append(&mut self, event: &Event) -> io::Result<u64> {
         let offset = self.file.seek(SeekFrom::End(0))?;
         let json = serde_json::to_string(event)
             .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
         writeln!(self.file, "{json}")?;
         self.file.sync_data()?;
+
+        if self.max_log_size > 0 && self.active_log_size()? >= self.max_log_size {
+            self.rotate()?;
+        }
+
         Ok(offset)
     }
 
@@ -109,12 +202,23 @@ impl EventLog {
         Ok(Box::new(archive_iter.chain(active_iter)))
     }
 
-    /// Rotate the active log: refresh views, compress to archive, truncate, reset offsets.
+    /// Rotate the active log: refresh registered views, compress to archive,
+    /// truncate, and reset view offsets.
     ///
     /// If the active log is empty, this is a no-op.
-    pub fn rotate(&mut self, views: &mut [&mut dyn ViewOps]) -> io::Result<()> {
+    pub fn rotate(&mut self) -> io::Result<()> {
+        let mut views = std::mem::take(&mut self.views);
+        let result = self.rotate_inner(&mut views);
+        self.views = views;
+        result
+    }
+
+    fn rotate_inner(
+        &mut self,
+        views: &mut HashMap<String, Box<dyn ViewOps>>,
+    ) -> io::Result<()> {
         // 1. Refresh all views so snapshots reflect everything in app.jsonl
-        for view in views.iter_mut() {
+        for view in views.values_mut() {
             view.refresh_boxed(self)?;
         }
 
@@ -134,11 +238,50 @@ impl EventLog {
         self.file.sync_data()?;
 
         // 6. Reset all view offsets and save snapshots
-        for view in views.iter_mut() {
+        for view in views.values_mut() {
             view.reset_offset()?;
         }
 
         Ok(())
+    }
+
+    /// Refresh all registered views from the event log.
+    pub fn refresh_all(&mut self) -> io::Result<()> {
+        let mut views = std::mem::take(&mut self.views);
+        let result = (|| {
+            for view in views.values_mut() {
+                view.refresh_boxed(self)?;
+            }
+            Ok(())
+        })();
+        self.views = views;
+        result
+    }
+
+    /// Get a reference to a registered view's current state by name.
+    ///
+    /// Returns an error if the view name is not found or if the type `S`
+    /// does not match the view's actual state type.
+    pub fn view<S>(&self, name: &str) -> io::Result<&S>
+    where
+        S: Serialize + DeserializeOwned + Default + Clone + 'static,
+    {
+        let view = self.views.get(name).ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::NotFound,
+                format!("view '{name}' not found"),
+            )
+        })?;
+        let typed = view
+            .as_any()
+            .downcast_ref::<View<S>>()
+            .ok_or_else(|| {
+                io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    format!("view '{name}' type mismatch"),
+                )
+            })?;
+        Ok(typed.state())
     }
 
     /// Returns the path to the data directory.

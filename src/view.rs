@@ -3,6 +3,7 @@ use crate::log::EventLog;
 use crate::snapshot::{self, Snapshot};
 use serde::de::DeserializeOwned;
 use serde::Serialize;
+use std::any::Any;
 use std::io;
 use std::path::{Path, PathBuf};
 
@@ -17,6 +18,10 @@ pub trait ViewOps {
     fn reset_offset(&mut self) -> io::Result<()>;
     /// Returns the view name.
     fn view_name(&self) -> &str;
+    /// Downcast to `&dyn Any` for type recovery.
+    fn as_any(&self) -> &dyn Any;
+    /// Downcast to `&mut dyn Any` for type recovery.
+    fn as_any_mut(&mut self) -> &mut dyn Any;
 }
 
 /// A derived view over an event log.
@@ -193,7 +198,7 @@ where
 
 impl<S> ViewOps for View<S>
 where
-    S: Serialize + DeserializeOwned + Default + Clone,
+    S: Serialize + DeserializeOwned + Default + Clone + 'static,
 {
     fn refresh_boxed(&mut self, log: &EventLog) -> io::Result<()> {
         self.refresh(log)?;
@@ -215,6 +220,14 @@ where
 
     fn view_name(&self) -> &str {
         &self.name
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+
+    fn as_any_mut(&mut self) -> &mut dyn Any {
+        self
     }
 }
 
