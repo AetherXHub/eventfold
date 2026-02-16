@@ -1,6 +1,7 @@
 #![allow(dead_code)]
 
 use eventfold::{Event, EventLog};
+use serde::{Deserialize, Serialize};
 use serde_json::json;
 
 pub fn dummy_event(event_type: &str) -> Event {
@@ -16,4 +17,46 @@ pub fn append_n(log: &mut EventLog, n: usize) {
         let event = dummy_event(&format!("event_{i}"));
         log.append(&event).unwrap();
     }
+}
+
+pub fn counter_reducer(state: u64, _event: &Event) -> u64 {
+    state + 1
+}
+
+#[derive(Default, Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct TodoState {
+    pub items: Vec<TodoItem>,
+    pub next_id: u64,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct TodoItem {
+    pub id: u64,
+    pub text: String,
+    pub done: bool,
+}
+
+pub fn todo_reducer(mut state: TodoState, event: &Event) -> TodoState {
+    match event.event_type.as_str() {
+        "todo_added" => {
+            state.items.push(TodoItem {
+                id: state.next_id,
+                text: event.data["text"].as_str().unwrap_or("").to_string(),
+                done: false,
+            });
+            state.next_id += 1;
+        }
+        "todo_completed" => {
+            let id = event.data["id"].as_u64().unwrap_or(0);
+            if let Some(item) = state.items.iter_mut().find(|i| i.id == id) {
+                item.done = true;
+            }
+        }
+        "todo_deleted" => {
+            let id = event.data["id"].as_u64().unwrap_or(0);
+            state.items.retain(|i| i.id != id);
+        }
+        _ => {}
+    }
+    state
 }
