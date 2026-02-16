@@ -88,7 +88,7 @@ fn test_arbitrary_data_numbers() {
     let data = json!({
         "integer": 42,
         "negative": -7,
-        "float": 3.14,
+        "float": 1.23,
         "zero": 0,
         "large": 9999999999u64
     });

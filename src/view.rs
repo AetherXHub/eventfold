@@ -7,7 +7,23 @@ use std::any::Any;
 use std::io;
 use std::path::{Path, PathBuf};
 
-/// A plain function pointer that folds an event into state.
+/// A pure function that folds an event into state.
+///
+/// Reducers receive owned state and return owned state. They should be pure
+/// (no I/O, no side effects) and always handle unknown event types with a
+/// `_ => {}` arm for forward compatibility.
+///
+/// # Examples
+///
+/// ```
+/// use eventfold::{Event, ReduceFn};
+///
+/// fn counter(state: u64, _event: &Event) -> u64 {
+///     state + 1
+/// }
+///
+/// let reducer: ReduceFn<u64> = counter;
+/// ```
 pub type ReduceFn<S> = fn(S, &Event) -> S;
 
 /// Trait for type-erased view operations during log rotation.

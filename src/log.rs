@@ -11,6 +11,30 @@ use std::path::{Path, PathBuf};
 /// Boxed iterator over `(Event, line_hash)` pairs from `read_full()`.
 type FullEventIter = Box<dyn Iterator<Item = io::Result<(Event, String)>>>;
 
+/// An append-only event log backed by files in a single directory.
+///
+/// The log manages an active log file (`app.jsonl`), a compressed archive
+/// (`archive.jsonl.zst`), a views directory for snapshots, and an optional
+/// set of registered views for auto-rotation and bulk refresh.
+///
+/// Use [`EventLog::builder`] to configure views and auto-rotation, or
+/// [`EventLog::open`] for a bare log without registered views.
+///
+/// # Examples
+///
+/// ```
+/// # use tempfile::tempdir;
+/// use eventfold::{Event, EventLog};
+/// use serde_json::json;
+///
+/// # let dir = tempdir().unwrap();
+/// let mut log = EventLog::open(dir.path()).unwrap();
+/// log.append(&Event::new("click", json!({"x": 10}))).unwrap();
+///
+/// let events: Vec<_> = log.read_from(0).unwrap()
+///     .collect::<Result<Vec<_>, _>>().unwrap();
+/// assert_eq!(events.len(), 1);
+/// ```
 pub struct EventLog {
     dir: PathBuf,
     log_path: PathBuf,
@@ -24,7 +48,27 @@ pub struct EventLog {
 /// A factory closure that creates a boxed view given a views directory path.
 type ViewFactory = Box<dyn FnOnce(&Path) -> Box<dyn ViewOps>>;
 
-/// Builder for configuring and opening an `EventLog`.
+/// Builder for configuring and opening an [`EventLog`].
+///
+/// Register views and set auto-rotation thresholds before calling
+/// [`open`](EventLogBuilder::open) to create the log.
+///
+/// # Examples
+///
+/// ```
+/// # use tempfile::tempdir;
+/// # use eventfold::{Event, EventLog};
+/// # use serde::{Serialize, Deserialize};
+/// # #[derive(Default, Clone, Serialize, Deserialize)]
+/// # struct Counter { count: u64 }
+/// # fn count(mut s: Counter, _e: &Event) -> Counter { s.count += 1; s }
+/// # let dir = tempdir().unwrap();
+/// let mut log = EventLog::builder(dir.path())
+///     .max_log_size(10_000_000)  // auto-rotate at 10 MB
+///     .view::<Counter>("counter", count)
+///     .open()
+///     .unwrap();
+/// ```
 pub struct EventLogBuilder {
     dir: PathBuf,
     max_log_size: u64,

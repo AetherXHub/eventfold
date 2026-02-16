@@ -4,10 +4,34 @@ use std::fs;
 use std::io::{self, Write};
 use std::path::Path;
 
+/// A persisted checkpoint of a view's state.
+///
+/// Snapshots are written atomically to disk (via a `.tmp` + rename) as a side
+/// effect of [`View::refresh`](crate::View::refresh). They enable incremental
+/// reads — on the next refresh, only events after `offset` need to be processed.
+///
+/// The snapshot file is JSON and can be inspected directly:
+///
+/// ```text
+/// $ cat views/todos.snapshot.json | jq .
+/// {
+///   "state": { "items": [...], "next_id": 3 },
+///   "offset": 1284,
+///   "hash": "a3f2e1b09c4d..."
+/// }
+/// ```
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Snapshot<S> {
+    /// The derived state at the time of the snapshot.
     pub state: S,
+
+    /// Byte offset into `app.jsonl` after the last event consumed.
+    /// Always refers to the active log — any snapshot that exists has already
+    /// consumed everything in the archive.
     pub offset: u64,
+
+    /// Hex-encoded xxh64 hash of the last event line processed.
+    /// Used for integrity verification on the next refresh.
     pub hash: String,
 }
 

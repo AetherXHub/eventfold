@@ -139,8 +139,8 @@ fn test_idempotent_refresh() {
     append_n(&mut log, 4);
 
     let mut view: View<u64> = View::new("counter", counter_reducer, log.views_dir());
-    let state1 = view.refresh(&log).unwrap().clone();
-    let state2 = view.refresh(&log).unwrap().clone();
+    let state1 = *view.refresh(&log).unwrap();
+    let state2 = *view.refresh(&log).unwrap();
     assert_eq!(state1, state2);
     assert_eq!(state1, 4);
 }
