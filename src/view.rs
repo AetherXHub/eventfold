@@ -59,6 +59,31 @@ where
                 self.hash = snap.hash;
             }
             self.loaded = true;
+
+            // Verify snapshot integrity
+            if self.offset > 0 {
+                match self.verify_snapshot(log)? {
+                    SnapshotValidity::Valid => {}
+                    SnapshotValidity::OffsetBeyondEof => {
+                        eprintln!(
+                            "eventfold: view '{}': snapshot offset {} is beyond log EOF, rebuilding",
+                            self.name, self.offset
+                        );
+                        self.state = S::default();
+                        self.offset = 0;
+                        self.hash = String::new();
+                    }
+                    SnapshotValidity::HashMismatch => {
+                        eprintln!(
+                            "eventfold: view '{}': snapshot hash mismatch, rebuilding",
+                            self.name
+                        );
+                        self.state = S::default();
+                        self.offset = 0;
+                        self.hash = String::new();
+                    }
+                }
+            }
         }
 
         let mut state = std::mem::take(&mut self.state);
@@ -117,4 +142,28 @@ where
     pub fn name(&self) -> &str {
         &self.name
     }
+
+    fn verify_snapshot(&self, log: &EventLog) -> io::Result<SnapshotValidity> {
+        let file_size = log.active_log_size()?;
+
+        if self.offset > file_size {
+            return Ok(SnapshotValidity::OffsetBeyondEof);
+        }
+
+        if self.offset == 0 {
+            return Ok(SnapshotValidity::Valid);
+        }
+
+        match log.read_line_hash_before(self.offset)? {
+            Some(hash) if hash == self.hash => Ok(SnapshotValidity::Valid),
+            Some(_) => Ok(SnapshotValidity::HashMismatch),
+            None => Ok(SnapshotValidity::Valid),
+        }
+    }
+}
+
+enum SnapshotValidity {
+    Valid,
+    OffsetBeyondEof,
+    HashMismatch,
 }

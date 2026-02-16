@@ -1,6 +1,6 @@
 use crate::event::Event;
 use std::fs::{self, File, OpenOptions};
-use std::io::{self, BufRead, BufReader, Seek, SeekFrom, Write};
+use std::io::{self, BufRead, BufReader, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 
 pub struct EventLog {
@@ -97,6 +97,53 @@ impl EventLog {
     /// Returns the path to the views directory.
     pub fn views_dir(&self) -> &Path {
         &self.views_dir
+    }
+
+    /// Returns the current size in bytes of the active log file.
+    pub fn active_log_size(&self) -> io::Result<u64> {
+        Ok(fs::metadata(&self.log_path)?.len())
+    }
+
+    /// Read the line immediately before the given byte offset and return its hash.
+    ///
+    /// The offset should point to the byte after the newline of the last consumed line.
+    /// Returns `None` if offset is 0.
+    pub fn read_line_hash_before(&self, offset: u64) -> io::Result<Option<String>> {
+        if offset == 0 {
+            return Ok(None);
+        }
+
+        let mut file = File::open(&self.log_path)?;
+        let file_len = file.metadata()?.len();
+
+        if offset > file_len {
+            return Ok(None);
+        }
+
+        // offset - 1 is the '\n' at end of previous line
+        // Scan backwards from offset - 2 to find start of that line
+        let newline_pos = offset - 1;
+        let mut start = 0u64;
+
+        if newline_pos > 0 {
+            let scan_start = newline_pos.saturating_sub(8192);
+            file.seek(SeekFrom::Start(scan_start))?;
+            let mut buf = vec![0u8; (newline_pos - scan_start) as usize];
+            file.read_exact(&mut buf)?;
+
+            if let Some(pos) = buf.iter().rposition(|&b| b == b'\n') {
+                start = scan_start + pos as u64 + 1;
+            } else {
+                start = scan_start;
+            }
+        }
+
+        file.seek(SeekFrom::Start(start))?;
+        let line_len = (newline_pos - start) as usize;
+        let mut line_buf = vec![0u8; line_len];
+        file.read_exact(&mut line_buf)?;
+
+        Ok(Some(line_hash(&line_buf)))
     }
 }
 
