@@ -1,7 +1,12 @@
+use crate::archive;
 use crate::event::Event;
+use crate::view::ViewOps;
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, BufRead, BufReader, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
+
+/// Boxed iterator over `(Event, line_hash)` pairs from `read_full()`.
+type FullEventIter = Box<dyn Iterator<Item = io::Result<(Event, String)>>>;
 
 pub struct EventLog {
     dir: PathBuf,
@@ -77,6 +82,63 @@ impl EventLog {
             pos: offset,
             file_len,
         })
+    }
+
+    /// Read the full event history: archive (if any) + active log.
+    ///
+    /// Returns an iterator yielding `(event, line_hash)` for each event
+    /// across all archived frames and the current active log.
+    pub fn read_full(&self) -> io::Result<FullEventIter> {
+        let archive_iter: Box<dyn Iterator<Item = io::Result<(Event, String)>>> =
+            match archive::open_archive_reader(&self.archive_path)? {
+                Some(reader) => Box::new(EventLineIter {
+                    reader,
+                    buf: String::new(),
+                }),
+                None => Box::new(std::iter::empty()),
+            };
+
+        let file = File::open(&self.log_path)?;
+        let reader = BufReader::new(file);
+        let active_iter: Box<dyn Iterator<Item = io::Result<(Event, String)>>> =
+            Box::new(EventLineIter {
+                reader,
+                buf: String::new(),
+            });
+
+        Ok(Box::new(archive_iter.chain(active_iter)))
+    }
+
+    /// Rotate the active log: refresh views, compress to archive, truncate, reset offsets.
+    ///
+    /// If the active log is empty, this is a no-op.
+    pub fn rotate(&mut self, views: &mut [&mut dyn ViewOps]) -> io::Result<()> {
+        // 1. Refresh all views so snapshots reflect everything in app.jsonl
+        for view in views.iter_mut() {
+            view.refresh_boxed(self)?;
+        }
+
+        // 2. Read active log contents
+        let contents = fs::read(&self.log_path)?;
+
+        // 3. No-op if empty
+        if contents.is_empty() {
+            return Ok(());
+        }
+
+        // 4. Compress and append to archive
+        archive::append_compressed_frame(&self.archive_path, &contents)?;
+
+        // 5. Truncate active log
+        self.file.set_len(0)?;
+        self.file.sync_data()?;
+
+        // 6. Reset all view offsets and save snapshots
+        for view in views.iter_mut() {
+            view.reset_offset()?;
+        }
+
+        Ok(())
     }
 
     /// Returns the path to the data directory.
@@ -191,6 +253,44 @@ impl<I: Iterator<Item = io::Result<String>>> Iterator for LogIterator<I> {
 
             self.pos = next_pos;
             return Some(Ok((event, next_pos, hash)));
+        }
+    }
+}
+
+/// Iterator that reads events line-by-line from any BufRead source.
+/// Used by `read_full()` for both archive and active log streams.
+struct EventLineIter<R> {
+    reader: R,
+    buf: String,
+}
+
+impl<R: BufRead> Iterator for EventLineIter<R> {
+    type Item = io::Result<(Event, String)>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        loop {
+            self.buf.clear();
+            match self.reader.read_line(&mut self.buf) {
+                Ok(0) => return None,
+                Ok(_) => {
+                    // Skip partial lines at EOF (no trailing newline — crash mid-write)
+                    if !self.buf.ends_with('\n') {
+                        return None;
+                    }
+                    let line = self.buf.trim_end_matches('\n').trim_end_matches('\r');
+                    if line.is_empty() {
+                        continue;
+                    }
+                    let hash = line_hash(line.as_bytes());
+                    match serde_json::from_str::<Event>(line) {
+                        Ok(event) => return Some(Ok((event, hash))),
+                        Err(e) => {
+                            return Some(Err(io::Error::new(io::ErrorKind::InvalidData, e)))
+                        }
+                    }
+                }
+                Err(e) => return Some(Err(e)),
+            }
         }
     }
 }

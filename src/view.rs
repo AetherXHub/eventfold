@@ -9,6 +9,16 @@ use std::path::{Path, PathBuf};
 /// A plain function pointer that folds an event into state.
 pub type ReduceFn<S> = fn(S, &Event) -> S;
 
+/// Trait for type-erased view operations during log rotation.
+pub trait ViewOps {
+    /// Refresh the view from the log, discarding the state reference.
+    fn refresh_boxed(&mut self, log: &EventLog) -> io::Result<()>;
+    /// Reset the offset to 0 and save the snapshot.
+    fn reset_offset(&mut self) -> io::Result<()>;
+    /// Returns the view name.
+    fn view_name(&self) -> &str;
+}
+
 /// A derived view over an event log.
 ///
 /// Owns a reducer function, manages its snapshot on disk, and supports
@@ -21,6 +31,7 @@ pub struct View<S> {
     offset: u64,
     hash: String,
     loaded: bool,
+    needs_full_replay: bool,
 }
 
 impl<S> View<S>
@@ -42,21 +53,23 @@ where
             offset: 0,
             hash: String::new(),
             loaded: false,
+            needs_full_replay: false,
         }
     }
 
     /// Refresh the view from the event log.
     ///
-    /// On first call, attempts to load a snapshot from disk. Then reads
-    /// any new events from the log starting at the current offset, folds
-    /// them through the reducer, and saves a new snapshot if events were
-    /// processed.
+    /// On first call, attempts to load a snapshot from disk. If no snapshot
+    /// exists, uses `read_full()` to replay the archive + active log.
+    /// If a snapshot exists, reads only new events from the active log.
     pub fn refresh(&mut self, log: &EventLog) -> io::Result<&S> {
         if !self.loaded {
             if let Some(snap) = snapshot::load::<S>(&self.snapshot_path)? {
                 self.state = snap.state;
                 self.offset = snap.offset;
                 self.hash = snap.hash;
+            } else {
+                self.needs_full_replay = true;
             }
             self.loaded = true;
 
@@ -72,6 +85,7 @@ where
                         self.state = S::default();
                         self.offset = 0;
                         self.hash = String::new();
+                        self.needs_full_replay = true;
                     }
                     SnapshotValidity::HashMismatch => {
                         eprintln!(
@@ -81,6 +95,7 @@ where
                         self.state = S::default();
                         self.offset = 0;
                         self.hash = String::new();
+                        self.needs_full_replay = true;
                     }
                 }
             }
@@ -91,12 +106,25 @@ where
         let mut new_hash = self.hash.clone();
         let mut processed = false;
 
-        for result in log.read_from(self.offset)? {
-            let (event, next_offset, line_hash) = result?;
-            state = (self.reducer)(state, &event);
-            new_offset = next_offset;
-            new_hash = line_hash;
-            processed = true;
+        if self.needs_full_replay {
+            self.needs_full_replay = false;
+            for result in log.read_full()? {
+                let (event, line_hash) = result?;
+                state = (self.reducer)(state, &event);
+                new_hash = line_hash;
+                processed = true;
+            }
+            if processed {
+                new_offset = log.active_log_size()?;
+            }
+        } else {
+            for result in log.read_from(self.offset)? {
+                let (event, next_offset, line_hash) = result?;
+                state = (self.reducer)(state, &event);
+                new_offset = next_offset;
+                new_hash = line_hash;
+                processed = true;
+            }
         }
 
         self.state = state;
@@ -125,16 +153,17 @@ where
         &self.state
     }
 
-    /// Rebuild the view by replaying the full active log.
+    /// Rebuild the view by replaying the full history (archive + active log).
     ///
     /// Deletes the existing snapshot, resets state to default, and
-    /// calls `refresh` to replay from byte 0.
+    /// calls `refresh` to replay everything.
     pub fn rebuild(&mut self, log: &EventLog) -> io::Result<&S> {
         snapshot::delete(&self.snapshot_path)?;
         self.state = S::default();
         self.offset = 0;
         self.hash = String::new();
         self.loaded = true;
+        self.needs_full_replay = true;
         self.refresh(log)
     }
 
@@ -159,6 +188,33 @@ where
             Some(_) => Ok(SnapshotValidity::HashMismatch),
             None => Ok(SnapshotValidity::Valid),
         }
+    }
+}
+
+impl<S> ViewOps for View<S>
+where
+    S: Serialize + DeserializeOwned + Default + Clone,
+{
+    fn refresh_boxed(&mut self, log: &EventLog) -> io::Result<()> {
+        self.refresh(log)?;
+        Ok(())
+    }
+
+    fn reset_offset(&mut self) -> io::Result<()> {
+        self.offset = 0;
+        self.hash = String::new();
+        snapshot::save(
+            &self.snapshot_path,
+            &Snapshot {
+                state: self.state.clone(),
+                offset: self.offset,
+                hash: self.hash.clone(),
+            },
+        )
+    }
+
+    fn view_name(&self) -> &str {
+        &self.name
     }
 }
 
