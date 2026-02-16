@@ -1,0 +1,161 @@
+* {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+}
+
+body {
+    font-family: system-ui, -apple-system, sans-serif;
+    line-height: 1.6;
+    color: #333;
+    max-width: 900px;
+    margin: 0 auto;
+    padding: 2rem;
+}
+
+h1 {
+    margin-bottom: 0.25rem;
+}
+
+.subtitle {
+    color: #666;
+    margin-bottom: 2rem;
+}
+
+.layout {
+    display: flex;
+    gap: 2rem;
+}
+
+.todo-section {
+    flex: 2;
+}
+
+.todo-section h2,
+.stats-section h2 {
+    margin-bottom: 1rem;
+}
+
+.todo-form {
+    display: flex;
+    gap: 0.5rem;
+    margin-bottom: 1.5rem;
+}
+
+.todo-form input[type="text"] {
+    flex: 1;
+    padding: 0.5rem;
+    border: 1px solid #ccc;
+    border-radius: 4px;
+    font-size: 1rem;
+}
+
+.todo-form button {
+    padding: 0.5rem 1rem;
+    border: none;
+    border-radius: 4px;
+    background: #4a9eff;
+    color: white;
+    cursor: pointer;
+    font-size: 1rem;
+}
+
+.todo-form button:hover {
+    background: #3a8eef;
+}
+
+.todo-list {
+    list-style: none;
+}
+
+.todo-item {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.75rem 0;
+    border-bottom: 1px solid #eee;
+}
+
+.todo-item.completed .todo-text {
+    text-decoration: line-through;
+    color: #999;
+}
+
+.todo-text {
+    flex: 1;
+}
+
+.toggle-btn,
+.delete-btn {
+    background: none;
+    border: 1px solid #ddd;
+    border-radius: 4px;
+    cursor: pointer;
+    padding: 0.25rem 0.5rem;
+    font-size: 1rem;
+    line-height: 1;
+}
+
+.toggle-btn:hover {
+    background: #e8f4e8;
+}
+
+.delete-btn {
+    color: #e44;
+}
+
+.delete-btn:hover {
+    background: #fee;
+}
+
+.stats-section {
+    flex: 1;
+    background: #f8f9fa;
+    padding: 1.5rem;
+    border-radius: 8px;
+    align-self: flex-start;
+}
+
+.stats-list {
+    margin: 0;
+}
+
+.stat {
+    display: flex;
+    justify-content: space-between;
+    padding: 0.5rem 0;
+    border-bottom: 1px solid #e9ecef;
+}
+
+.stat:last-child {
+    border-bottom: none;
+}
+
+.stat dt {
+    color: #666;
+}
+
+.stat dd {
+    font-weight: bold;
+}
+
+.loading {
+    color: #666;
+    font-style: italic;
+}
+
+.empty {
+    color: #999;
+    font-style: italic;
+    padding: 1rem 0;
+}
+
+.error {
+    color: #e44;
+}
+
+@media (max-width: 640px) {
+    .layout {
+        flex-direction: column;
+    }
+}
