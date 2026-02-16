@@ -1,3 +1,5 @@
+//! Snapshot persistence for derived view state.
+
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use std::fs;

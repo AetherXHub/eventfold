@@ -13,6 +13,17 @@ pub fn TodoList(version: RwSignal<u32>) -> impl IntoView {
     let toggle_v = toggle_action.version();
     let delete_v = delete_action.version();
 
+    let input_ref = NodeRef::<leptos::html::Input>::new();
+
+    // Clear input and refocus after each successful add.
+    Effect::new(move || {
+        add_v.track();
+        if let Some(input) = input_ref.get() {
+            input.set_value("");
+            let _ = input.focus();
+        }
+    });
+
     // Bump the shared version signal when any action completes,
     // so the Stats component also refetches.
     Effect::new(move || {
@@ -29,7 +40,7 @@ pub fn TodoList(version: RwSignal<u32>) -> impl IntoView {
             <h2>"Todos"</h2>
             <ActionForm action=add_action>
                 <div class="todo-form">
-                    <input type="text" name="text" placeholder="What needs to be done?" required />
+                    <input type="text" name="text" placeholder="What needs to be done?" required node_ref=input_ref />
                     <button type="submit">"Add"</button>
                 </div>
             </ActionForm>

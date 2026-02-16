@@ -1,3 +1,5 @@
+#![warn(missing_docs)]
+
 //! # eventfold
 //!
 //! Your application state is a fold over an event log.
