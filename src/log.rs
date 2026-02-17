@@ -424,8 +424,35 @@ impl EventReader {
     }
 
     /// Returns the current size of `app.jsonl` in bytes.
+    ///
+    /// This is a lightweight "version" check — if the size hasn't
+    /// changed, no new events have been appended.
     pub fn active_log_size(&self) -> io::Result<u64> {
         Ok(fs::metadata(&self.log_path)?.len())
+    }
+
+    /// Returns `true` if the active log contains data beyond `offset`.
+    ///
+    /// This is a non-blocking metadata check (stat call). Use it to
+    /// implement poll-based tailing:
+    ///
+    /// ```no_run
+    /// # use eventfold::EventReader;
+    /// let reader = EventReader::new("./data");
+    /// let mut offset = 0u64;
+    /// loop {
+    ///     if reader.has_new_events(offset).unwrap() {
+    ///         for result in reader.read_from(offset).unwrap() {
+    ///             let (event, next_offset, _hash) = result.unwrap();
+    ///             // process event
+    ///             offset = next_offset;
+    ///         }
+    ///     }
+    ///     std::thread::sleep(std::time::Duration::from_millis(50));
+    /// }
+    /// ```
+    pub fn has_new_events(&self, offset: u64) -> io::Result<bool> {
+        Ok(fs::metadata(&self.log_path)?.len() > offset)
     }
 
     /// Returns the path to the active log file.
@@ -725,6 +752,11 @@ impl EventLog {
     /// Returns the current size in bytes of the active log file.
     pub fn active_log_size(&self) -> io::Result<u64> {
         self.reader.active_log_size()
+    }
+
+    /// Returns `true` if there are events beyond `offset` in the active log.
+    pub fn has_new_events(&self, offset: u64) -> io::Result<bool> {
+        self.reader.has_new_events(offset)
     }
 
     /// Read the line immediately before the given byte offset and return its hash.
