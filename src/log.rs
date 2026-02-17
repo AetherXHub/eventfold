@@ -2,12 +2,15 @@ use crate::archive;
 use crate::event::Event;
 use crate::view::{ReduceFn, View, ViewOps};
 use fs2::FileExt;
+use notify::{EventKind, RecursiveMode, Watcher};
 use serde::de::DeserializeOwned;
 use serde::Serialize;
 use std::collections::HashMap;
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, BufRead, BufReader, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
+use std::sync::mpsc;
+use std::time::Duration;
 
 /// Boxed iterator over `(Event, line_hash)` pairs from `read_full()`.
 type FullEventIter = Box<dyn Iterator<Item = io::Result<(Event, String)>>>;
@@ -24,6 +27,15 @@ pub enum LockMode {
     /// No locking. Use when you know only one process accesses the log,
     /// or in test scenarios where multiple writers are intentionally used.
     None,
+}
+
+/// Result of waiting for new events.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum WaitResult {
+    /// New data appeared in the active log. Contains the new file size.
+    NewData(u64),
+    /// The timeout elapsed with no new data.
+    Timeout,
 }
 
 /// Conflict details when a conditional append fails.
@@ -455,6 +467,90 @@ impl EventReader {
         Ok(fs::metadata(&self.log_path)?.len() > offset)
     }
 
+    /// Block until new data appears after `offset` in the active log,
+    /// or until `timeout` elapses.
+    ///
+    /// Uses OS-level file system notifications (inotify on Linux,
+    /// kqueue on macOS, ReadDirectoryChangesW on Windows) for
+    /// near-zero-latency detection.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// # use eventfold::{EventReader, WaitResult};
+    /// # use std::time::Duration;
+    /// let reader = EventReader::new("./data");
+    /// let mut offset = 0u64;
+    /// loop {
+    ///     match reader.wait_for_events(offset, Duration::from_secs(5)).unwrap() {
+    ///         WaitResult::NewData(new_size) => {
+    ///             for result in reader.read_from(offset).unwrap() {
+    ///                 let (event, next_offset, _hash) = result.unwrap();
+    ///                 // process event
+    ///                 offset = next_offset;
+    ///             }
+    ///         }
+    ///         WaitResult::Timeout => {
+    ///             // No new events — do periodic housekeeping, etc.
+    ///         }
+    ///     }
+    /// }
+    /// ```
+    pub fn wait_for_events(
+        &self,
+        offset: u64,
+        timeout: Duration,
+    ) -> io::Result<WaitResult> {
+        // Check immediately — data may already be available.
+        let current_size = self.active_log_size()?;
+        if current_size > offset {
+            return Ok(WaitResult::NewData(current_size));
+        }
+
+        // Set up a file watcher on the log file's parent directory.
+        let (tx, rx) = mpsc::channel();
+        let mut watcher =
+            notify::recommended_watcher(move |res: Result<notify::Event, _>| {
+                if let Ok(event) = res
+                    && matches!(event.kind, EventKind::Modify(_) | EventKind::Create(_))
+                {
+                    let _ = tx.send(());
+                }
+            })
+            .map_err(io::Error::other)?;
+
+        watcher
+            .watch(
+                self.log_path.parent().unwrap_or(&self.log_path),
+                RecursiveMode::NonRecursive,
+            )
+            .map_err(io::Error::other)?;
+
+        // Re-check after watcher is set up (avoid TOCTOU race).
+        let current_size = self.active_log_size()?;
+        if current_size > offset {
+            return Ok(WaitResult::NewData(current_size));
+        }
+
+        // Wait for a notification or timeout.
+        match rx.recv_timeout(timeout) {
+            Ok(()) => {
+                let new_size = self.active_log_size()?;
+                if new_size > offset {
+                    Ok(WaitResult::NewData(new_size))
+                } else {
+                    // Spurious wakeup (e.g., metadata change, not a write).
+                    // For simplicity, return Timeout. Caller will retry.
+                    Ok(WaitResult::Timeout)
+                }
+            }
+            Err(mpsc::RecvTimeoutError::Timeout) => Ok(WaitResult::Timeout),
+            Err(mpsc::RecvTimeoutError::Disconnected) => {
+                Err(io::Error::other("file watcher disconnected"))
+            }
+        }
+    }
+
     /// Returns the path to the active log file.
     pub fn log_path(&self) -> &Path {
         &self.log_path
@@ -757,6 +853,17 @@ impl EventLog {
     /// Returns `true` if there are events beyond `offset` in the active log.
     pub fn has_new_events(&self, offset: u64) -> io::Result<bool> {
         self.reader.has_new_events(offset)
+    }
+
+    /// Block until new data appears after `offset`, or until `timeout` elapses.
+    ///
+    /// Delegates to [`EventReader::wait_for_events`].
+    pub fn wait_for_events(
+        &self,
+        offset: u64,
+        timeout: Duration,
+    ) -> io::Result<WaitResult> {
+        self.reader.wait_for_events(offset, timeout)
     }
 
     /// Read the line immediately before the given byte offset and return its hash.

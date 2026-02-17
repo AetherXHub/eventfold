@@ -57,7 +57,7 @@ mod view;
 pub use event::Event;
 pub use log::{
     line_hash, AppendConflict, AppendResult, ConditionalAppendError, EventLog, EventLogBuilder,
-    EventReader, EventWriter, LockMode,
+    EventReader, EventWriter, LockMode, WaitResult,
 };
 pub use snapshot::Snapshot;
 pub use view::{ReduceFn, View, ViewOps};

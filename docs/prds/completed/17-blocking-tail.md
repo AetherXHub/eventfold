@@ -1,3 +1,5 @@
+> **Status: COMPLETED** — Implemented and verified on 2026-02-16
+
 # PRD 17: Blocking Tail (wait_for_events)
 
 ## Summary
