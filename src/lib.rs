@@ -25,17 +25,17 @@
 //!     state
 //! }
 //!
-//! # let dir = tempdir().unwrap();
+//! # let dir = tempdir()?;
 //! let mut log = EventLog::builder(dir.path())
 //!     .view::<Counter>("counter", count_reducer)
-//!     .open()
-//!     .unwrap();
+//!     .open()?;
 //!
-//! log.append(&Event::new("click", json!({"x": 10}))).unwrap();
-//! log.refresh_all().unwrap();
+//! log.append(&Event::new("click", json!({"x": 10})))?;
+//! log.refresh_all()?;
 //!
-//! let state: &Counter = log.view("counter").unwrap();
+//! let state: &Counter = log.view("counter")?;
 //! assert_eq!(state.count, 1);
+//! # Ok::<(), std::io::Error>(())
 //! ```
 //!
 //! ## Core Concepts
