@@ -96,6 +96,8 @@ cargo add eventfold
 - Structured events with optional ID, actor, and metadata fields
 - Conditional append — optimistic concurrency via offset + hash checks
 - File locking — exclusive writer prevents multi-process corruption
+- Poll-based tailing — lightweight `has_new_events` check for change detection
+- Blocking tail — OS-level file watching via `wait_for_events` for sub-millisecond notification
 - Reader/writer separation — clone-friendly readers, exclusive writer
 - Zero infrastructure — just files in a directory
 - Single-crate, minimal dependencies, no async
@@ -132,12 +134,14 @@ Only two data files: the compressed archive and the active log. Views are cached
 ## Examples
 
 ```
-cargo run --example todo_cli       # minimal CLI todo app
-cargo run --example multi_view     # same log, multiple views
-cargo run --example rebuild        # changing a reducer and rebuilding
-cargo run --example rotation       # manual and auto rotation
-cargo run --example time_travel    # replaying to a specific point
-cargo run --example notes_cli      # tagged notes with search
+cargo run --example todo_cli        # minimal CLI todo app
+cargo run --example multi_view      # same log, multiple views
+cargo run --example rebuild         # changing a reducer and rebuilding
+cargo run --example rotation        # manual and auto rotation
+cargo run --example time_travel     # replaying to a specific point
+cargo run --example notes_cli       # tagged notes with search
+cargo run --example poll_tail       # poll-based tailing with has_new_events
+cargo run --example blocking_tail   # blocking tail with wait_for_events
 ```
 
 A full-stack Leptos web app example lives in `examples-leptos/todo-app/`.

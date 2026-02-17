@@ -238,7 +238,7 @@ eventfold is designed to handle crashes gracefully.
 
 ### What's Not Guaranteed
 
-- **No concurrent writers.** eventfold assumes a single process. Multiple writers will corrupt the log.
+- **Single writer.** File locking (`LockMode::Flock`, the default) prevents a second writer from opening the same log, but eventfold does not support concurrent writers. If you bypass locking with `LockMode::None`, multiple writers will corrupt the log.
 - **No fsync on the directory.** On some filesystems, a crash after rename could theoretically lose the rename. In practice, this is extremely rare on modern filesystems.
 - **Snapshot loss requires rebuild.** If both the snapshot and its `.tmp` are lost (extremely unlikely), the view rebuilds from the full log on next refresh.
 
@@ -316,11 +316,101 @@ Or programmatically:
 view.rebuild(&log)?;
 ```
 
-## 8. Limitations
+## 8. Tailing
+
+eventfold provides two mechanisms for detecting new events in real time.
+
+### Poll-Based Tailing
+
+`has_new_events(offset)` is a non-blocking stat call that returns `true` when the active log contains data beyond `offset`. Pair it with a sleep loop:
+
+```rust
+let reader = log.reader();
+let mut offset = 0u64;
+loop {
+    if reader.has_new_events(offset)? {
+        for result in reader.read_from(offset)? {
+            let (event, next_offset, _hash) = result?;
+            // process event
+            offset = next_offset;
+        }
+    }
+    std::thread::sleep(std::time::Duration::from_millis(50));
+}
+```
+
+This is simple and lightweight. The tradeoff is latency: you'll notice events at most one sleep interval late.
+
+### Blocking Tail
+
+`wait_for_events(offset, timeout)` blocks the calling thread until OS-level file notifications (inotify, kqueue, ReadDirectoryChangesW) indicate new data, or until the timeout elapses:
+
+```rust
+use eventfold::WaitResult;
+use std::time::Duration;
+
+let reader = log.reader();
+let mut offset = 0u64;
+loop {
+    match reader.wait_for_events(offset, Duration::from_secs(5))? {
+        WaitResult::NewData(_size) => {
+            for result in reader.read_from(offset)? {
+                let (event, next_offset, _hash) = result?;
+                // process event
+                offset = next_offset;
+            }
+        }
+        WaitResult::Timeout => {
+            // periodic housekeeping
+        }
+    }
+}
+```
+
+This gives sub-millisecond notification latency with no busy-polling. For async runtimes, wrap `wait_for_events` in `spawn_blocking`.
+
+## 9. Conditional Append
+
+`append_if` provides optimistic concurrency control. It appends an event only if the log's current offset and last-line hash match expectations:
+
+```rust
+let result = log.append(&Event::new("first", json!({})))?;
+
+// Later, append only if no one else has written:
+log.append_if(
+    &Event::new("second", json!({})),
+    result.end_offset,
+    &result.line_hash,
+)?;
+```
+
+If another event was appended between the two calls, `append_if` returns a `ConditionalAppendError::Conflict` without writing — no data is lost, and the caller can retry or merge.
+
+## 10. File Locking
+
+By default, `EventWriter::open` acquires an exclusive advisory lock (`flock`) on `app.jsonl`. A second writer attempting to open the same log will get an error immediately.
+
+```rust
+use eventfold::LockMode;
+
+// Explicit lock mode via builder:
+let log = EventLog::builder("./data")
+    .lock_mode(LockMode::Flock)  // default
+    .open()?;
+
+// Disable locking (tests, single-process guarantee):
+let log = EventLog::builder("./data")
+    .lock_mode(LockMode::None)
+    .open()?;
+```
+
+Readers (`EventReader`) do not acquire locks and can be cloned freely.
+
+## 11. Limitations
 
 Be aware of these constraints when evaluating eventfold for your use case:
 
-- **Single-process only.** No locking, no concurrent writers. If you need multi-process access, put eventfold behind a server.
+- **Single writer.** File locking prevents accidental multi-writer corruption, but eventfold is designed for one writer at a time. If you need multi-process writes, put eventfold behind a server.
 - **No ad-hoc queries.** You can't query events by field without writing a reducer or iterating manually. If you need flexible queries, use a database.
 - **Reducers must be deterministic.** If your reducer uses random values, timestamps, or I/O, views won't rebuild correctly.
 - **Memory-bound state.** The entire derived state lives in memory. If your state is gigabytes, eventfold isn't the right tool.
