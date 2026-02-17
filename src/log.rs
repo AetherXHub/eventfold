@@ -118,6 +118,17 @@ pub struct EventWriter {
     max_log_size: u64,
 }
 
+impl std::fmt::Debug for EventWriter {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("EventWriter")
+            .field("log_path", &self.log_path)
+            .field("archive_path", &self.archive_path)
+            .field("views_dir", &self.views_dir)
+            .field("max_log_size", &self.max_log_size)
+            .finish()
+    }
+}
+
 impl EventWriter {
     /// Open or create an event log directory for writing.
     ///
@@ -596,6 +607,16 @@ pub struct EventLog {
     views: HashMap<String, Box<dyn ViewOps>>,
 }
 
+impl std::fmt::Debug for EventLog {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("EventLog")
+            .field("writer", &self.writer)
+            .field("reader", &self.reader)
+            .field("view_count", &self.views.len())
+            .finish()
+    }
+}
+
 /// A factory closure that creates a boxed view given a views directory path.
 type ViewFactory = Box<dyn FnOnce(&Path) -> Box<dyn ViewOps>>;
 
@@ -625,6 +646,17 @@ pub struct EventLogBuilder {
     max_log_size: u64,
     lock_mode: LockMode,
     view_factories: Vec<ViewFactory>,
+}
+
+impl std::fmt::Debug for EventLogBuilder {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("EventLogBuilder")
+            .field("dir", &self.dir)
+            .field("max_log_size", &self.max_log_size)
+            .field("lock_mode", &self.lock_mode)
+            .field("view_count", &self.view_factories.len())
+            .finish()
+    }
 }
 
 impl EventLogBuilder {

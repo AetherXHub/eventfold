@@ -55,6 +55,17 @@ pub struct View<S> {
     needs_full_replay: bool,
 }
 
+impl<S: std::fmt::Debug> std::fmt::Debug for View<S> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("View")
+            .field("name", &self.name)
+            .field("snapshot_path", &self.snapshot_path)
+            .field("state", &self.state)
+            .field("offset", &self.offset)
+            .finish()
+    }
+}
+
 impl<S> View<S>
 where
     S: Serialize + DeserializeOwned + Default + Clone,
