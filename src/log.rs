@@ -11,6 +11,59 @@ use std::path::{Path, PathBuf};
 /// Boxed iterator over `(Event, line_hash)` pairs from `read_full()`.
 type FullEventIter = Box<dyn Iterator<Item = io::Result<(Event, String)>>>;
 
+/// Conflict details when a conditional append fails.
+#[derive(Debug, Clone, PartialEq)]
+pub struct AppendConflict {
+    /// The offset the caller expected the log to be at.
+    pub expected_offset: u64,
+    /// The actual current offset (file size).
+    pub actual_offset: u64,
+    /// The hash the caller expected.
+    pub expected_hash: String,
+    /// The actual hash of the last line, if the offset matched
+    /// but the hash didn't. `None` if the offset check failed first.
+    pub actual_hash: Option<String>,
+}
+
+/// Error type for conditional append operations.
+#[derive(Debug)]
+pub enum ConditionalAppendError {
+    /// The log state didn't match expectations — no write occurred.
+    Conflict(AppendConflict),
+    /// An I/O error occurred during the check or write.
+    Io(io::Error),
+}
+
+impl std::fmt::Display for ConditionalAppendError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ConditionalAppendError::Conflict(c) => {
+                write!(
+                    f,
+                    "conditional append conflict: expected offset {} (hash {:?}), actual offset {} (hash {:?})",
+                    c.expected_offset, c.expected_hash, c.actual_offset, c.actual_hash
+                )
+            }
+            ConditionalAppendError::Io(e) => write!(f, "I/O error: {e}"),
+        }
+    }
+}
+
+impl std::error::Error for ConditionalAppendError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            ConditionalAppendError::Io(e) => Some(e),
+            ConditionalAppendError::Conflict(_) => None,
+        }
+    }
+}
+
+impl From<io::Error> for ConditionalAppendError {
+    fn from(e: io::Error) -> Self {
+        ConditionalAppendError::Io(e)
+    }
+}
+
 /// Result of a successful append operation.
 #[derive(Debug, Clone, PartialEq)]
 pub struct AppendResult {
@@ -96,6 +149,54 @@ impl EventWriter {
             },
             needs_rotate,
         ))
+    }
+
+    /// Append an event only if the log's current state matches expectations.
+    ///
+    /// Checks that the active log's file size equals `expected_offset` and
+    /// (if non-zero) that the hash of the last event line matches
+    /// `expected_hash`. If either check fails, returns
+    /// `Err(ConditionalAppendError::Conflict(...))` without writing.
+    ///
+    /// For an empty log, pass `expected_offset: 0` and `expected_hash: ""`.
+    ///
+    /// On success, returns the same `AppendResult` as `append()`.
+    pub fn append_if(
+        &mut self,
+        event: &Event,
+        expected_offset: u64,
+        expected_hash: &str,
+    ) -> Result<AppendResult, ConditionalAppendError> {
+        let current_size = self.active_log_size()?;
+
+        // Fast path: offset mismatch means someone else wrote.
+        if current_size != expected_offset {
+            return Err(ConditionalAppendError::Conflict(AppendConflict {
+                expected_offset,
+                actual_offset: current_size,
+                expected_hash: expected_hash.to_string(),
+                actual_hash: None,
+            }));
+        }
+
+        // If log is non-empty, verify the last line hash.
+        if expected_offset > 0 {
+            let reader = self.reader();
+            let actual_hash = reader
+                .read_line_hash_before(expected_offset)?
+                .unwrap_or_default();
+            if actual_hash != expected_hash {
+                return Err(ConditionalAppendError::Conflict(AppendConflict {
+                    expected_offset,
+                    actual_offset: current_size,
+                    expected_hash: expected_hash.to_string(),
+                    actual_hash: Some(actual_hash),
+                }));
+            }
+        }
+
+        // Checks passed — proceed with normal append.
+        Ok(self.append(event)?)
     }
 
     /// Manually trigger log rotation.
@@ -454,6 +555,25 @@ impl EventLog {
     pub fn append(&mut self, event: &Event) -> io::Result<AppendResult> {
         let (result, needs_rotate) = self.writer.append_raw(event)?;
         if needs_rotate {
+            self.rotate()?;
+        }
+        Ok(result)
+    }
+
+    /// Conditional append — delegates to the inner writer.
+    ///
+    /// Appends an event only if the log's current state matches expectations.
+    /// May trigger auto-rotation if `max_log_size` is configured and exceeded.
+    pub fn append_if(
+        &mut self,
+        event: &Event,
+        expected_offset: u64,
+        expected_hash: &str,
+    ) -> Result<AppendResult, ConditionalAppendError> {
+        let result = self.writer.append_if(event, expected_offset, expected_hash)?;
+        if self.writer.max_log_size > 0
+            && self.writer.active_log_size()? >= self.writer.max_log_size
+        {
             self.rotate()?;
         }
         Ok(result)
