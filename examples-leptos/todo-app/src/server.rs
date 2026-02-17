@@ -46,17 +46,15 @@ pub async fn add_todo(text: String) -> Result<(), ServerFnError> {
     use serde_json::json;
 
     let id = uuid::Uuid::new_v4().to_string();
-    let created_at = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .expect("system clock before epoch")
-        .as_secs();
 
     let log = use_eventfold()?;
     let mut log = log.lock().expect("EventLog lock poisoned");
-    log.0.append(&Event::new(
-        "todo_added",
-        json!({ "id": id, "text": text, "created_at": created_at }),
-    ))?;
+    // Event::new auto-sets `ts` from the system clock, so no need for
+    // a manual created_at field. The reducer reads event.ts directly.
+    log.0.append(
+        &Event::new("todo_added", json!({ "id": id, "text": text }))
+            .with_id(uuid::Uuid::new_v4().to_string()),
+    )?;
     log.0.refresh_all()?;
     Ok(())
 }

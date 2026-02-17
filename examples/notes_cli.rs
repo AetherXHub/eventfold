@@ -71,24 +71,33 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .view::<TagsState>("tags", tags_reducer)
         .open()?;
 
-    // Add notes
-    log.append(&Event::new(
-        "note_added",
-        json!({"text": "Fix login bug", "tags": ["bug", "auth"]}),
-    ))?;
-    println!("Added note: \"Fix login bug\" [bug, auth]");
+    // Add notes — using .with_actor() to track who created each note
+    log.append(
+        &Event::new(
+            "note_added",
+            json!({"text": "Fix login bug", "tags": ["bug", "auth"]}),
+        )
+        .with_actor("alice"),
+    )?;
+    println!("Added note: \"Fix login bug\" [bug, auth] (by alice)");
 
-    log.append(&Event::new(
-        "note_added",
-        json!({"text": "Add dark mode", "tags": ["feature", "ui"]}),
-    ))?;
-    println!("Added note: \"Add dark mode\" [feature, ui]");
+    log.append(
+        &Event::new(
+            "note_added",
+            json!({"text": "Add dark mode", "tags": ["feature", "ui"]}),
+        )
+        .with_actor("bob"),
+    )?;
+    println!("Added note: \"Add dark mode\" [feature, ui] (by bob)");
 
-    log.append(&Event::new(
-        "note_added",
-        json!({"text": "Update deps", "tags": ["maintenance"]}),
-    ))?;
-    println!("Added note: \"Update deps\" [maintenance]");
+    log.append(
+        &Event::new(
+            "note_added",
+            json!({"text": "Update deps", "tags": ["maintenance"]}),
+        )
+        .with_actor("alice"),
+    )?;
+    println!("Added note: \"Update deps\" [maintenance] (by alice)");
 
     // Refresh both views
     log.refresh_all()?;

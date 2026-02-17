@@ -60,8 +60,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Phase 1: append events and build v1 view
     {
         let mut log = EventLog::open(dir.path())?;
-        log.append(&Event::new("todo_added", json!({"text": "buy milk"})))?;
-        log.append(&Event::new("todo_added", json!({"text": "fix bug"})))?;
+        log.append(
+            &Event::new("todo_added", json!({"text": "buy milk"}))
+                .with_meta(json!({"source": "cli"})),
+        )?;
+        log.append(
+            &Event::new("todo_added", json!({"text": "fix bug"}))
+                .with_meta(json!({"source": "cli", "priority": "high"})),
+        )?;
 
         let mut view = View::new("todos", reducer_v1, &dir.path().join("views"));
         view.refresh(&log.reader())?;

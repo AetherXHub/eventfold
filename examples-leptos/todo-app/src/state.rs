@@ -28,7 +28,7 @@ pub fn todo_reducer(mut state: TodoState, event: &eventfold::Event) -> TodoState
                 id: event.data["id"].as_str().unwrap_or("").to_string(),
                 text: event.data["text"].as_str().unwrap_or("").to_string(),
                 done: false,
-                created_at: event.data["created_at"].as_u64().unwrap_or(0),
+                created_at: event.ts,
             });
         }
         "todo_toggled" => {
