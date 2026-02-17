@@ -16,6 +16,13 @@ use std::time::Duration;
 type FullEventIter = Box<dyn Iterator<Item = io::Result<(Event, String)>>>;
 
 /// Controls file locking behavior for an [`EventWriter`].
+///
+/// # Examples
+///
+/// ```
+/// use eventfold::LockMode;
+/// assert_eq!(LockMode::default(), LockMode::Flock);
+/// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum LockMode {
     /// Acquire an exclusive advisory lock on `app.jsonl`.
@@ -30,6 +37,14 @@ pub enum LockMode {
 }
 
 /// Result of waiting for new events.
+///
+/// # Examples
+///
+/// ```
+/// use eventfold::WaitResult;
+/// let result = WaitResult::NewData(1024);
+/// assert!(matches!(result, WaitResult::NewData(_)));
+/// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum WaitResult {
     /// New data appeared in the active log. Contains the new file size.
@@ -93,6 +108,21 @@ impl From<io::Error> for ConditionalAppendError {
 }
 
 /// Result of a successful append operation.
+///
+/// # Examples
+///
+/// ```
+/// # use tempfile::tempdir;
+/// use eventfold::{Event, EventLog};
+/// use serde_json::json;
+/// # let dir = tempdir()?;
+/// let mut log = EventLog::open(dir.path())?;
+/// let result = log.append(&Event::new("click", json!({})))?;
+/// assert_eq!(result.start_offset, 0);
+/// assert!(result.end_offset > 0);
+/// assert!(!result.line_hash.is_empty());
+/// # Ok::<(), std::io::Error>(())
+/// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct AppendResult {
@@ -112,6 +142,19 @@ pub struct AppendResult {
 ///
 /// Owns the append file handle and manages log rotation at the file level.
 /// For reading, use [`EventReader`] obtained via [`EventWriter::reader`].
+///
+/// # Examples
+///
+/// ```
+/// # use tempfile::tempdir;
+/// use eventfold::{Event, EventWriter};
+/// use serde_json::json;
+/// # let dir = tempdir()?;
+/// let mut writer = EventWriter::open(dir.path())?;
+/// let result = writer.append(&Event::new("click", json!({})))?;
+/// assert_eq!(result.start_offset, 0);
+/// # Ok::<(), std::io::Error>(())
+/// ```
 pub struct EventWriter {
     file: File,
     log_path: PathBuf,
@@ -137,6 +180,16 @@ impl EventWriter {
     /// Creates `dir/`, `dir/views/`, and `dir/app.jsonl` if they don't exist.
     /// Opens `app.jsonl` in append mode and acquires an exclusive advisory lock.
     ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use tempfile::tempdir;
+    /// use eventfold::EventWriter;
+    /// # let dir = tempdir()?;
+    /// let writer = EventWriter::open(dir.path())?;
+    /// # Ok::<(), std::io::Error>(())
+    /// ```
+    ///
     /// # Errors
     ///
     /// Returns an error if directory creation fails, if the log file cannot
@@ -152,6 +205,16 @@ impl EventWriter {
     /// immediately (non-blocking).
     ///
     /// With [`LockMode::None`], no lock is acquired.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use tempfile::tempdir;
+    /// use eventfold::{EventWriter, LockMode};
+    /// # let dir = tempdir()?;
+    /// let writer = EventWriter::open_with_lock(dir.path(), LockMode::None)?;
+    /// # Ok::<(), std::io::Error>(())
+    /// ```
     ///
     /// # Errors
     ///
@@ -197,6 +260,19 @@ impl EventWriter {
     /// Returns an [`AppendResult`] with the start offset, end offset, and line hash.
     /// Does not trigger auto-rotation. For auto-rotation support, use [`EventLog`].
     ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use tempfile::tempdir;
+    /// use eventfold::{Event, EventWriter};
+    /// use serde_json::json;
+    /// # let dir = tempdir()?;
+    /// let mut writer = EventWriter::open(dir.path())?;
+    /// let result = writer.append(&Event::new("click", json!({})))?;
+    /// assert_eq!(result.start_offset, 0);
+    /// # Ok::<(), std::io::Error>(())
+    /// ```
+    ///
     /// # Errors
     ///
     /// Returns an error if serialization or writing to disk fails.
@@ -239,6 +315,25 @@ impl EventWriter {
     /// For an empty log, pass `expected_offset: 0` and `expected_hash: ""`.
     ///
     /// On success, returns the same `AppendResult` as `append()`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use tempfile::tempdir;
+    /// use eventfold::{Event, EventWriter};
+    /// use serde_json::json;
+    /// # let dir = tempdir()?;
+    /// let mut writer = EventWriter::open(dir.path())?;
+    /// // First append to empty log
+    /// let r = writer.append_if(&Event::new("a", json!({})), 0, "")?;
+    /// // Second append using previous result
+    /// let _ = writer.append_if(
+    ///     &Event::new("b", json!({})),
+    ///     r.end_offset,
+    ///     &r.line_hash,
+    /// )?;
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
     ///
     /// # Errors
     ///
@@ -377,6 +472,22 @@ impl EventWriter {
 /// Opens fresh file handles per read call. Safe to use concurrently
 /// with an [`EventWriter`] on the same log — completed lines are immutable,
 /// and partial lines at EOF are detected and skipped.
+///
+/// # Examples
+///
+/// ```
+/// # use tempfile::tempdir;
+/// use eventfold::{Event, EventWriter, EventReader};
+/// use serde_json::json;
+/// # let dir = tempdir()?;
+/// let mut writer = EventWriter::open(dir.path())?;
+/// writer.append(&Event::new("click", json!({})))?;
+/// let reader = writer.reader();
+/// let events: Vec<_> = reader.read_from(0)?
+///     .collect::<Result<Vec<_>, _>>()?;
+/// assert_eq!(events.len(), 1);
+/// # Ok::<(), std::io::Error>(())
+/// ```
 #[derive(Debug, Clone)]
 pub struct EventReader {
     log_path: PathBuf,
@@ -385,6 +496,16 @@ pub struct EventReader {
 
 impl EventReader {
     /// Create a reader pointing at the given log directory.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use tempfile::tempdir;
+    /// use eventfold::EventReader;
+    /// # let dir = tempdir()?;
+    /// let reader = EventReader::new(dir.path());
+    /// # Ok::<(), std::io::Error>(())
+    /// ```
     pub fn new(dir: impl AsRef<Path>) -> Self {
         let dir = dir.as_ref();
         EventReader {
@@ -785,6 +906,15 @@ impl EventLogBuilder {
 }
 
 /// Compute xxh64 hash of raw line bytes (without trailing newline), hex-encoded.
+///
+/// # Examples
+///
+/// ```
+/// use eventfold::line_hash;
+/// let hash = line_hash(b"hello world");
+/// assert_eq!(hash.len(), 16);
+/// assert_eq!(hash, line_hash(b"hello world")); // deterministic
+/// ```
 pub fn line_hash(line: &[u8]) -> String {
     let hash = xxhash_rust::xxh64::xxh64(line, 0);
     format!("{:016x}", hash)
@@ -795,6 +925,16 @@ impl EventLog {
     ///
     /// Creates the directory and `views/` subdirectory if they don't exist.
     /// Opens or creates `app.jsonl` in append mode.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use tempfile::tempdir;
+    /// use eventfold::EventLog;
+    /// # let dir = tempdir()?;
+    /// let log = EventLog::open(dir.path())?;
+    /// # Ok::<(), std::io::Error>(())
+    /// ```
     ///
     /// # Errors
     ///
@@ -811,6 +951,18 @@ impl EventLog {
     }
 
     /// Create a builder for configuring and opening an event log.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use tempfile::tempdir;
+    /// use eventfold::EventLog;
+    /// # let dir = tempdir()?;
+    /// let log = EventLog::builder(dir.path())
+    ///     .max_log_size(10_000_000)
+    ///     .open()?;
+    /// # Ok::<(), std::io::Error>(())
+    /// ```
     pub fn builder(dir: impl AsRef<Path>) -> EventLogBuilder {
         EventLogBuilder {
             dir: dir.as_ref().to_path_buf(),

@@ -50,6 +50,21 @@ pub trait ViewOps: sealed::Sealed {
 ///
 /// Owns a reducer function, manages its snapshot on disk, and supports
 /// incremental refresh from the active log.
+///
+/// # Examples
+/// ```
+/// # use tempfile::tempdir;
+/// use eventfold::{Event, EventWriter, View};
+/// use serde_json::json;
+/// # let dir = tempdir()?;
+/// # let writer = EventWriter::open(dir.path())?;
+/// let mut view: View<u64> = View::new(
+///     "counter",
+///     |state, _event| state + 1,
+///     writer.views_dir(),
+/// );
+/// # Ok::<(), std::io::Error>(())
+/// ```
 pub struct View<S> {
     name: String,
     reducer: ReduceFn<S>,
@@ -81,6 +96,21 @@ where
     /// `name` identifies this view (used for the snapshot filename).
     /// `reducer` is the fold function applied to each event.
     /// `views_dir` is the directory where snapshot files are stored.
+    ///
+    /// # Examples
+    /// ```
+    /// # use tempfile::tempdir;
+    /// use eventfold::{EventWriter, View};
+    /// # let dir = tempdir()?;
+    /// # let writer = EventWriter::open(dir.path())?;
+    /// let view: View<u64> = View::new(
+    ///     "counter",
+    ///     |state, _event| state + 1,
+    ///     writer.views_dir(),
+    /// );
+    /// assert_eq!(*view.state(), 0); // default state
+    /// # Ok::<(), std::io::Error>(())
+    /// ```
     pub fn new(name: &str, reducer: ReduceFn<S>, views_dir: &Path) -> Self {
         let snapshot_path = views_dir.join(format!("{name}.snapshot.json"));
         View {
@@ -100,6 +130,25 @@ where
     /// On first call, attempts to load a snapshot from disk. If no snapshot
     /// exists, uses `read_full()` to replay the archive + active log.
     /// If a snapshot exists, reads only new events from the active log.
+    ///
+    /// # Examples
+    /// ```
+    /// # use tempfile::tempdir;
+    /// use eventfold::{Event, EventWriter, View};
+    /// use serde_json::json;
+    /// # let dir = tempdir()?;
+    /// let mut writer = EventWriter::open(dir.path())?;
+    /// writer.append(&Event::new("a", json!({})))?;
+    /// writer.append(&Event::new("b", json!({})))?;
+    /// let mut view: View<u64> = View::new(
+    ///     "counter",
+    ///     |state, _event| state + 1,
+    ///     writer.views_dir(),
+    /// );
+    /// let state = view.refresh(&writer.reader())?;
+    /// assert_eq!(*state, 2);
+    /// # Ok::<(), std::io::Error>(())
+    /// ```
     ///
     /// # Errors
     ///
@@ -195,6 +244,25 @@ where
     ///
     /// Deletes the existing snapshot, resets state to default, and
     /// calls `refresh` to replay everything.
+    ///
+    /// # Examples
+    /// ```
+    /// # use tempfile::tempdir;
+    /// use eventfold::{Event, EventWriter, View};
+    /// use serde_json::json;
+    /// # let dir = tempdir()?;
+    /// let mut writer = EventWriter::open(dir.path())?;
+    /// writer.append(&Event::new("a", json!({})))?;
+    /// let mut view: View<u64> = View::new(
+    ///     "counter",
+    ///     |state, _event| state + 1,
+    ///     writer.views_dir(),
+    /// );
+    /// view.refresh(&writer.reader())?;
+    /// let state = view.rebuild(&writer.reader())?;
+    /// assert_eq!(*state, 1); // same result after full replay
+    /// # Ok::<(), std::io::Error>(())
+    /// ```
     ///
     /// # Errors
     ///

@@ -40,6 +40,14 @@ pub struct Snapshot<S> {
 
 impl<S> Snapshot<S> {
     /// Create a new snapshot.
+    ///
+    /// # Examples
+    /// ```
+    /// use eventfold::Snapshot;
+    /// let snap = Snapshot::new(42u64, 1024, "abc123".to_string());
+    /// assert_eq!(snap.state, 42);
+    /// assert_eq!(snap.offset, 1024);
+    /// ```
     pub fn new(state: S, offset: u64, hash: String) -> Self {
         Snapshot {
             state,
@@ -53,6 +61,17 @@ impl<S> Snapshot<S> {
 ///
 /// Writes to a `.tmp` file first, syncs, then renames to the final path.
 /// If the process crashes mid-write, the old snapshot file survives intact.
+///
+/// # Examples
+/// ```
+/// # use tempfile::tempdir;
+/// use eventfold::{snapshot, Snapshot};
+/// # let dir = tempdir()?;
+/// # let path = dir.path().join("test.snapshot.json");
+/// let snap = Snapshot::new(42u64, 1024, "hash".to_string());
+/// snapshot::save(&path, &snap)?;
+/// # Ok::<(), std::io::Error>(())
+/// ```
 ///
 /// # Errors
 ///
@@ -78,6 +97,19 @@ pub fn save<S: Serialize>(path: &Path, snapshot: &Snapshot<S>) -> io::Result<()>
 /// Returns `Ok(None)` if the file doesn't exist or if deserialization fails
 /// (treating a corrupt snapshot as missing triggers a full rebuild).
 ///
+/// # Examples
+/// ```
+/// # use tempfile::tempdir;
+/// use eventfold::{snapshot, Snapshot};
+/// # let dir = tempdir()?;
+/// # let path = dir.path().join("test.snapshot.json");
+/// # let snap = Snapshot::new(42u64, 0, String::new());
+/// # snapshot::save(&path, &snap)?;
+/// let loaded: Option<Snapshot<u64>> = snapshot::load(&path)?;
+/// assert!(loaded.is_some());
+/// # Ok::<(), std::io::Error>(())
+/// ```
+///
 /// # Errors
 ///
 /// Returns an error on I/O failures other than `NotFound` (e.g., permission denied).
@@ -97,6 +129,20 @@ pub fn load<S: DeserializeOwned>(path: &Path) -> io::Result<Option<Snapshot<S>>>
 /// Delete a snapshot file and its `.tmp` file if present.
 ///
 /// Idempotent — does not error if the files don't exist.
+///
+/// # Examples
+/// ```
+/// # use tempfile::tempdir;
+/// use eventfold::{snapshot, Snapshot};
+/// # let dir = tempdir()?;
+/// # let path = dir.path().join("test.snapshot.json");
+/// # let snap = Snapshot::new(42u64, 0, String::new());
+/// # snapshot::save(&path, &snap)?;
+/// snapshot::delete(&path)?;
+/// let loaded: Option<Snapshot<u64>> = snapshot::load(&path)?;
+/// assert!(loaded.is_none());
+/// # Ok::<(), std::io::Error>(())
+/// ```
 ///
 /// # Errors
 ///
