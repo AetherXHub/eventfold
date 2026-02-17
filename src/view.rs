@@ -100,6 +100,10 @@ where
     /// On first call, attempts to load a snapshot from disk. If no snapshot
     /// exists, uses `read_full()` to replay the archive + active log.
     /// If a snapshot exists, reads only new events from the active log.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if reading events or saving the snapshot fails.
     pub fn refresh(&mut self, reader: &EventReader) -> io::Result<&S> {
         if !self.loaded {
             if let Some(snap) = snapshot::load::<S>(&self.snapshot_path)? {
@@ -191,6 +195,11 @@ where
     ///
     /// Deletes the existing snapshot, resets state to default, and
     /// calls `refresh` to replay everything.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if deleting the snapshot, reading events, or saving
+    /// the new snapshot fails.
     pub fn rebuild(&mut self, reader: &EventReader) -> io::Result<&S> {
         snapshot::delete(&self.snapshot_path)?;
         self.state = S::default();

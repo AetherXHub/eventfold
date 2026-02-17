@@ -75,6 +75,10 @@ impl Event {
     /// Metadata fields (`id`, `actor`, `meta`) default to `None` — use the
     /// builder methods to set them.
     ///
+    /// # Panics
+    ///
+    /// Panics if the system clock is set before the Unix epoch.
+    ///
     /// # Examples
     ///
     /// ```

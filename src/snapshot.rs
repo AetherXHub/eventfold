@@ -53,6 +53,11 @@ impl<S> Snapshot<S> {
 ///
 /// Writes to a `.tmp` file first, syncs, then renames to the final path.
 /// If the process crashes mid-write, the old snapshot file survives intact.
+///
+/// # Errors
+///
+/// Returns an error if serialization fails or if writing/renaming the
+/// file fails (permissions, disk full, etc.).
 pub fn save<S: Serialize>(path: &Path, snapshot: &Snapshot<S>) -> io::Result<()> {
     let tmp_path = path.with_extension("json.tmp");
 
@@ -72,6 +77,10 @@ pub fn save<S: Serialize>(path: &Path, snapshot: &Snapshot<S>) -> io::Result<()>
 ///
 /// Returns `Ok(None)` if the file doesn't exist or if deserialization fails
 /// (treating a corrupt snapshot as missing triggers a full rebuild).
+///
+/// # Errors
+///
+/// Returns an error on I/O failures other than `NotFound` (e.g., permission denied).
 pub fn load<S: DeserializeOwned>(path: &Path) -> io::Result<Option<Snapshot<S>>> {
     let contents = match fs::read_to_string(path) {
         Ok(c) => c,
@@ -88,6 +97,10 @@ pub fn load<S: DeserializeOwned>(path: &Path) -> io::Result<Option<Snapshot<S>>>
 /// Delete a snapshot file and its `.tmp` file if present.
 ///
 /// Idempotent — does not error if the files don't exist.
+///
+/// # Errors
+///
+/// Returns an error on I/O failures other than `NotFound` (e.g., permission denied).
 pub fn delete(path: &Path) -> io::Result<()> {
     match fs::remove_file(path) {
         Ok(()) => {}

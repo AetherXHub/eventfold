@@ -136,6 +136,11 @@ impl EventWriter {
     ///
     /// Creates `dir/`, `dir/views/`, and `dir/app.jsonl` if they don't exist.
     /// Opens `app.jsonl` in append mode and acquires an exclusive advisory lock.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if directory creation fails, if the log file cannot
+    /// be opened, or if another writer already holds the lock.
     pub fn open(dir: impl AsRef<Path>) -> io::Result<Self> {
         Self::open_with_lock(dir, LockMode::Flock)
     }
@@ -147,6 +152,12 @@ impl EventWriter {
     /// immediately (non-blocking).
     ///
     /// With [`LockMode::None`], no lock is acquired.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if directory creation fails, if the log file cannot
+    /// be opened, or if locking fails (including when another writer holds
+    /// the lock).
     pub fn open_with_lock(dir: impl AsRef<Path>, lock: LockMode) -> io::Result<Self> {
         let dir = dir.as_ref().to_path_buf();
         let views_dir = dir.join("views");
@@ -185,6 +196,10 @@ impl EventWriter {
     ///
     /// Returns an [`AppendResult`] with the start offset, end offset, and line hash.
     /// Does not trigger auto-rotation. For auto-rotation support, use [`EventLog`].
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if serialization or writing to disk fails.
     pub fn append(&mut self, event: &Event) -> io::Result<AppendResult> {
         let (result, _) = self.append_raw(event)?;
         Ok(result)
@@ -224,6 +239,11 @@ impl EventWriter {
     /// For an empty log, pass `expected_offset: 0` and `expected_hash: ""`.
     ///
     /// On success, returns the same `AppendResult` as `append()`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ConditionalAppendError::Conflict`] if the offset or hash
+    /// doesn't match. Returns [`ConditionalAppendError::Io`] on I/O failures.
     pub fn append_if(
         &mut self,
         event: &Event,
@@ -266,6 +286,11 @@ impl EventWriter {
     ///
     /// Refreshes all views from the reader, compresses the active log to the
     /// archive, truncates the active log, and resets all view offsets.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if reading the log, compressing to archive,
+    /// truncating the file, or saving view snapshots fails.
     pub fn rotate(
         &mut self,
         reader: &EventReader,
@@ -308,6 +333,11 @@ impl EventWriter {
     }
 
     /// Returns the path to the data directory.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the log path has no parent directory (should never occur
+    /// because the path is always constructed as `dir/app.jsonl`).
     pub fn dir(&self) -> &Path {
         self.log_path.parent().unwrap()
     }
@@ -328,6 +358,10 @@ impl EventWriter {
     }
 
     /// Returns the current size of `app.jsonl` in bytes.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the file metadata cannot be read.
     pub fn active_log_size(&self) -> io::Result<u64> {
         Ok(fs::metadata(&self.log_path)?.len())
     }
@@ -364,6 +398,11 @@ impl EventReader {
     /// Returns an iterator yielding `(event, next_byte_offset, line_hash)` for
     /// each complete line. Empty lines are skipped. Partial lines (missing
     /// trailing newline) are skipped silently.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the log file cannot be opened or seeked.
+    /// Individual iterator items may also yield errors on malformed JSON lines.
     pub fn read_from(
         &self,
         offset: u64,
@@ -385,6 +424,11 @@ impl EventReader {
     ///
     /// Returns an iterator yielding `(event, line_hash)` for each event
     /// across all archived frames and the current active log.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the archive or active log cannot be opened.
+    /// Individual iterator items may also yield errors on malformed lines.
     pub fn read_full(&self) -> io::Result<FullEventIter> {
         let archive_iter: Box<dyn Iterator<Item = io::Result<(Event, String)>>> =
             match archive::open_archive_reader(&self.archive_path)? {
@@ -410,6 +454,10 @@ impl EventReader {
     ///
     /// The offset should point to the byte after the newline of the last consumed line.
     /// Returns `None` if offset is 0 or beyond the file.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the log file cannot be opened or read.
     pub fn read_line_hash_before(&self, offset: u64) -> io::Result<Option<String>> {
         if offset == 0 {
             return Ok(None);
@@ -452,6 +500,10 @@ impl EventReader {
     ///
     /// This is a lightweight "version" check — if the size hasn't
     /// changed, no new events have been appended.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the file metadata cannot be read.
     pub fn active_log_size(&self) -> io::Result<u64> {
         Ok(fs::metadata(&self.log_path)?.len())
     }
@@ -476,6 +528,10 @@ impl EventReader {
     ///     std::thread::sleep(std::time::Duration::from_millis(50));
     /// }
     /// ```
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the file metadata cannot be read.
     pub fn has_new_events(&self, offset: u64) -> io::Result<bool> {
         Ok(fs::metadata(&self.log_path)?.len() > offset)
     }
@@ -509,6 +565,11 @@ impl EventReader {
     ///     }
     /// }
     /// ```
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the file watcher cannot be initialized, if
+    /// the watcher channel disconnects, or if reading file metadata fails.
     pub fn wait_for_events(
         &self,
         offset: u64,
@@ -691,6 +752,11 @@ impl EventLogBuilder {
     ///
     /// Creates the directory structure, initializes all registered views,
     /// and performs auto-rotation if the active log exceeds `max_log_size`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if opening the writer fails (directory creation,
+    /// file open, lock acquisition) or if auto-rotation fails.
     pub fn open(self) -> io::Result<EventLog> {
         let mut writer = EventWriter::open_with_lock(&self.dir, self.lock_mode)?;
         writer.set_max_log_size(self.max_log_size);
@@ -729,6 +795,11 @@ impl EventLog {
     ///
     /// Creates the directory and `views/` subdirectory if they don't exist.
     /// Opens or creates `app.jsonl` in append mode.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if directory creation, file open, or lock
+    /// acquisition fails.
     pub fn open(dir: impl AsRef<Path>) -> io::Result<Self> {
         let writer = EventWriter::open(dir)?;
         let reader = writer.reader();
@@ -755,6 +826,10 @@ impl EventLog {
     /// and flushes to disk. Returns an [`AppendResult`] with the start offset,
     /// end offset, and line hash.
     /// May trigger auto-rotation if `max_log_size` is configured and exceeded.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if serialization, writing, or auto-rotation fails.
     pub fn append(&mut self, event: &Event) -> io::Result<AppendResult> {
         let (result, needs_rotate) = self.writer.append_raw(event)?;
         if needs_rotate {
@@ -767,6 +842,12 @@ impl EventLog {
     ///
     /// Appends an event only if the log's current state matches expectations.
     /// May trigger auto-rotation if `max_log_size` is configured and exceeded.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ConditionalAppendError::Conflict`] if the offset or hash
+    /// doesn't match. Returns [`ConditionalAppendError::Io`] on I/O or
+    /// auto-rotation failures.
     pub fn append_if(
         &mut self,
         event: &Event,
@@ -787,6 +868,10 @@ impl EventLog {
     /// Returns an iterator yielding `(event, next_byte_offset, line_hash)` for
     /// each complete line. Empty lines are skipped. Partial lines (missing
     /// trailing newline) are skipped silently.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the log file cannot be opened or seeked.
     pub fn read_from(
         &self,
         offset: u64,
@@ -798,6 +883,10 @@ impl EventLog {
     ///
     /// Returns an iterator yielding `(event, line_hash)` for each event
     /// across all archived frames and the current active log.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the archive or active log cannot be opened.
     pub fn read_full(&self) -> io::Result<FullEventIter> {
         self.reader.read_full()
     }
@@ -806,11 +895,20 @@ impl EventLog {
     /// truncate, and reset view offsets.
     ///
     /// If the active log is empty, this is a no-op.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if reading, compressing, truncating, or saving
+    /// view snapshots fails.
     pub fn rotate(&mut self) -> io::Result<()> {
         self.writer.rotate(&self.reader, &mut self.views)
     }
 
     /// Refresh all registered views from the event log.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if reading events or saving snapshots fails.
     pub fn refresh_all(&mut self) -> io::Result<()> {
         for view in self.views.values_mut() {
             view.refresh_boxed(&self.reader)?;
@@ -820,8 +918,11 @@ impl EventLog {
 
     /// Get a reference to a registered view's current state by name.
     ///
-    /// Returns an error if the view name is not found or if the type `S`
-    /// does not match the view's actual state type.
+    /// # Errors
+    ///
+    /// Returns `NotFound` if no view with the given name is registered.
+    /// Returns `InvalidInput` if the type `S` does not match the view's
+    /// actual state type.
     pub fn view<S>(&self, name: &str) -> io::Result<&S>
     where
         S: Serialize + DeserializeOwned + Default + Clone + 'static,
@@ -880,11 +981,19 @@ impl EventLog {
     }
 
     /// Returns the current size in bytes of the active log file.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the file metadata cannot be read.
     pub fn active_log_size(&self) -> io::Result<u64> {
         self.reader.active_log_size()
     }
 
     /// Returns `true` if there are events beyond `offset` in the active log.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the file metadata cannot be read.
     pub fn has_new_events(&self, offset: u64) -> io::Result<bool> {
         self.reader.has_new_events(offset)
     }
@@ -892,6 +1001,11 @@ impl EventLog {
     /// Block until new data appears after `offset`, or until `timeout` elapses.
     ///
     /// Delegates to [`EventReader::wait_for_events`].
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the file watcher cannot be initialized or if
+    /// reading file metadata fails.
     pub fn wait_for_events(
         &self,
         offset: u64,
@@ -904,6 +1018,10 @@ impl EventLog {
     ///
     /// The offset should point to the byte after the newline of the last consumed line.
     /// Returns `None` if offset is 0.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the log file cannot be opened or read.
     pub fn read_line_hash_before(&self, offset: u64) -> io::Result<Option<String>> {
         self.reader.read_line_hash_before(offset)
     }
