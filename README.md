@@ -11,7 +11,7 @@ state = events.reduce(reducer, initial_state)
 ## Quick Example
 
 ```rust
-use eventfold::{EventLog, Event, ReduceFn};
+use eventfold::{EventLog, Event};
 use serde::{Serialize, Deserialize};
 use serde_json::json;
 
@@ -73,7 +73,7 @@ This is the entire data layer. No schema, no migrations, no ORM. The log file is
 
 ## Core Concepts
 
-**Events** are append-only JSON lines in a log file. Each event has a type, arbitrary JSON data, and a timestamp. The log never rewrites or deletes events.
+**Events** are append-only JSON lines in a log file. Each event has a type, arbitrary JSON data, and a timestamp — plus optional fields for event ID, actor, and metadata. The log never rewrites or deletes events.
 
 **Reducers** are pure functions `fn(State, &Event) -> State` that give events meaning. They fold events into application state. Different reducers over the same log produce different views — same data, different lenses.
 
@@ -93,6 +93,10 @@ cargo add eventfold
 - Automatic log rotation with zstd compression
 - Integrity checking via xxhash — auto-rebuild on corruption
 - Crash-safe — atomic snapshot writes, graceful recovery from partial writes
+- Structured events with optional ID, actor, and metadata fields
+- Conditional append — optimistic concurrency via offset + hash checks
+- File locking — exclusive writer prevents multi-process corruption
+- Reader/writer separation — clone-friendly readers, exclusive writer
 - Zero infrastructure — just files in a directory
 - Single-crate, minimal dependencies, no async
 
@@ -119,7 +123,7 @@ Only two data files: the compressed archive and the active log. Views are cached
 
 ## When Not to Use
 
-- High-concurrency or multi-process writers
+- High-concurrency writers (file locking ensures single-writer safety, but throughput is limited)
 - Distributed systems
 - High write throughput (every append flushes to disk)
 - Applications needing ad-hoc queries or indexes beyond what reducers build
@@ -135,6 +139,8 @@ cargo run --example rotation       # manual and auto rotation
 cargo run --example time_travel    # replaying to a specific point
 cargo run --example notes_cli      # tagged notes with search
 ```
+
+A full-stack Leptos web app example lives in `examples-leptos/todo-app/`.
 
 ## Documentation
 
