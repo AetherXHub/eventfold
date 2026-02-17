@@ -26,8 +26,14 @@ use std::path::{Path, PathBuf};
 /// ```
 pub type ReduceFn<S> = fn(S, &Event) -> S;
 
+mod sealed {
+    pub trait Sealed {}
+}
+
 /// Trait for type-erased view operations during log rotation.
-pub trait ViewOps {
+///
+/// This trait is sealed and cannot be implemented outside of this crate.
+pub trait ViewOps: sealed::Sealed {
     /// Refresh the view from the event reader, discarding the state reference.
     fn refresh_boxed(&mut self, reader: &EventReader) -> io::Result<()>;
     /// Reset the offset to 0 and save the snapshot.
@@ -219,6 +225,8 @@ where
     }
 }
 
+impl<S> sealed::Sealed for View<S> {}
+
 impl<S> ViewOps for View<S>
 where
     S: Serialize + DeserializeOwned + Default + Clone + 'static,
@@ -233,11 +241,7 @@ where
         self.hash = String::new();
         snapshot::save(
             &self.snapshot_path,
-            &Snapshot {
-                state: self.state.clone(),
-                offset: self.offset,
-                hash: self.hash.clone(),
-            },
+            &Snapshot::new(self.state.clone(), self.offset, self.hash.clone()),
         )
     }
 
