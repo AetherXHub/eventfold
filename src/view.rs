@@ -1,5 +1,5 @@
 use crate::event::Event;
-use crate::log::EventLog;
+use crate::log::EventReader;
 use crate::snapshot::{self, Snapshot};
 use serde::de::DeserializeOwned;
 use serde::Serialize;
@@ -28,8 +28,8 @@ pub type ReduceFn<S> = fn(S, &Event) -> S;
 
 /// Trait for type-erased view operations during log rotation.
 pub trait ViewOps {
-    /// Refresh the view from the log, discarding the state reference.
-    fn refresh_boxed(&mut self, log: &EventLog) -> io::Result<()>;
+    /// Refresh the view from the event reader, discarding the state reference.
+    fn refresh_boxed(&mut self, reader: &EventReader) -> io::Result<()>;
     /// Reset the offset to 0 and save the snapshot.
     fn reset_offset(&mut self) -> io::Result<()>;
     /// Returns the view name.
@@ -78,12 +78,12 @@ where
         }
     }
 
-    /// Refresh the view from the event log.
+    /// Refresh the view from the event reader.
     ///
     /// On first call, attempts to load a snapshot from disk. If no snapshot
     /// exists, uses `read_full()` to replay the archive + active log.
     /// If a snapshot exists, reads only new events from the active log.
-    pub fn refresh(&mut self, log: &EventLog) -> io::Result<&S> {
+    pub fn refresh(&mut self, reader: &EventReader) -> io::Result<&S> {
         if !self.loaded {
             if let Some(snap) = snapshot::load::<S>(&self.snapshot_path)? {
                 self.state = snap.state;
@@ -96,7 +96,7 @@ where
 
             // Verify snapshot integrity
             if self.offset > 0 {
-                match self.verify_snapshot(log)? {
+                match self.verify_snapshot(reader)? {
                     SnapshotValidity::Valid => {}
                     SnapshotValidity::OffsetBeyondEof => {
                         eprintln!(
@@ -129,17 +129,17 @@ where
 
         if self.needs_full_replay {
             self.needs_full_replay = false;
-            for result in log.read_full()? {
+            for result in reader.read_full()? {
                 let (event, line_hash) = result?;
                 state = (self.reducer)(state, &event);
                 new_hash = line_hash;
                 processed = true;
             }
             if processed {
-                new_offset = log.active_log_size()?;
+                new_offset = reader.active_log_size()?;
             }
         } else {
-            for result in log.read_from(self.offset)? {
+            for result in reader.read_from(self.offset)? {
                 let (event, next_offset, line_hash) = result?;
                 state = (self.reducer)(state, &event);
                 new_offset = next_offset;
@@ -178,14 +178,14 @@ where
     ///
     /// Deletes the existing snapshot, resets state to default, and
     /// calls `refresh` to replay everything.
-    pub fn rebuild(&mut self, log: &EventLog) -> io::Result<&S> {
+    pub fn rebuild(&mut self, reader: &EventReader) -> io::Result<&S> {
         snapshot::delete(&self.snapshot_path)?;
         self.state = S::default();
         self.offset = 0;
         self.hash = String::new();
         self.loaded = true;
         self.needs_full_replay = true;
-        self.refresh(log)
+        self.refresh(reader)
     }
 
     /// Returns the view name.
@@ -193,8 +193,8 @@ where
         &self.name
     }
 
-    fn verify_snapshot(&self, log: &EventLog) -> io::Result<SnapshotValidity> {
-        let file_size = log.active_log_size()?;
+    fn verify_snapshot(&self, reader: &EventReader) -> io::Result<SnapshotValidity> {
+        let file_size = reader.active_log_size()?;
 
         if self.offset > file_size {
             return Ok(SnapshotValidity::OffsetBeyondEof);
@@ -204,7 +204,7 @@ where
             return Ok(SnapshotValidity::Valid);
         }
 
-        match log.read_line_hash_before(self.offset)? {
+        match reader.read_line_hash_before(self.offset)? {
             Some(hash) if hash == self.hash => Ok(SnapshotValidity::Valid),
             Some(_) => Ok(SnapshotValidity::HashMismatch),
             None => Ok(SnapshotValidity::Valid),
@@ -216,8 +216,8 @@ impl<S> ViewOps for View<S>
 where
     S: Serialize + DeserializeOwned + Default + Clone + 'static,
 {
-    fn refresh_boxed(&mut self, log: &EventLog) -> io::Result<()> {
-        self.refresh(log)?;
+    fn refresh_boxed(&mut self, reader: &EventReader) -> io::Result<()> {
+        self.refresh(reader)?;
         Ok(())
     }
 

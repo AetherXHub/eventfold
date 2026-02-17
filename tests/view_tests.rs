@@ -11,7 +11,7 @@ fn test_fresh_view_empty_log() {
     let dir = tempdir().unwrap();
     let log = EventLog::open(dir.path()).unwrap();
     let mut view: View<u64> = View::new("counter", counter_reducer, log.views_dir());
-    let state = view.refresh(&log).unwrap();
+    let state = view.refresh(&log.reader()).unwrap();
     assert_eq!(*state, 0);
 }
 
@@ -21,7 +21,7 @@ fn test_fresh_view_populated_log() {
     let mut log = EventLog::open(dir.path()).unwrap();
     append_n(&mut log, 5);
     let mut view: View<u64> = View::new("counter", counter_reducer, log.views_dir());
-    let state = view.refresh(&log).unwrap();
+    let state = view.refresh(&log.reader()).unwrap();
     assert_eq!(*state, 5);
 }
 
@@ -31,11 +31,11 @@ fn test_incremental_refresh() {
     let mut log = EventLog::open(dir.path()).unwrap();
     append_n(&mut log, 3);
     let mut view: View<u64> = View::new("counter", counter_reducer, log.views_dir());
-    let state = view.refresh(&log).unwrap();
+    let state = view.refresh(&log.reader()).unwrap();
     assert_eq!(*state, 3);
 
     append_n(&mut log, 2);
-    let state = view.refresh(&log).unwrap();
+    let state = view.refresh(&log.reader()).unwrap();
     assert_eq!(*state, 5);
 }
 
@@ -45,7 +45,7 @@ fn test_no_op_refresh() {
     let mut log = EventLog::open(dir.path()).unwrap();
     append_n(&mut log, 3);
     let mut view: View<u64> = View::new("counter", counter_reducer, log.views_dir());
-    view.refresh(&log).unwrap();
+    view.refresh(&log.reader()).unwrap();
 
     let snapshot_path = log.views_dir().join("counter.snapshot.json");
     let mtime_before = fs::metadata(&snapshot_path).unwrap().modified().unwrap();
@@ -53,7 +53,7 @@ fn test_no_op_refresh() {
     // Small sleep to ensure mtime would differ if file were rewritten
     std::thread::sleep(std::time::Duration::from_millis(50));
 
-    view.refresh(&log).unwrap();
+    view.refresh(&log.reader()).unwrap();
     let mtime_after = fs::metadata(&snapshot_path).unwrap().modified().unwrap();
     assert_eq!(mtime_before, mtime_after);
 }
@@ -66,7 +66,7 @@ fn test_snapshot_persistence() {
 
     {
         let mut view: View<u64> = View::new("counter", counter_reducer, log.views_dir());
-        view.refresh(&log).unwrap();
+        view.refresh(&log.reader()).unwrap();
         // view dropped here, snapshot persists on disk
     }
 
@@ -75,7 +75,7 @@ fn test_snapshot_persistence() {
 
     // Create a new view with the same name — should load snapshot
     let mut view: View<u64> = View::new("counter", counter_reducer, log.views_dir());
-    let state = view.refresh(&log).unwrap();
+    let state = view.refresh(&log.reader()).unwrap();
     // Should reflect all 5 events (3 from snapshot + 2 new)
     assert_eq!(*state, 5);
 }
@@ -90,7 +90,7 @@ fn test_state_no_io() {
     assert_eq!(*view.state(), 0);
 
     append_n(&mut log, 3);
-    view.refresh(&log).unwrap();
+    view.refresh(&log.reader()).unwrap();
 
     // state() after refresh returns current
     assert_eq!(*view.state(), 3);
@@ -103,10 +103,10 @@ fn test_rebuild() {
     append_n(&mut log, 5);
 
     let mut view: View<u64> = View::new("counter", counter_reducer, log.views_dir());
-    view.refresh(&log).unwrap();
+    view.refresh(&log.reader()).unwrap();
     assert_eq!(*view.state(), 5);
 
-    let state = view.rebuild(&log).unwrap();
+    let state = view.rebuild(&log.reader()).unwrap();
     assert_eq!(*state, 5);
 }
 
@@ -117,14 +117,14 @@ fn test_rebuild_deletes_snapshot() {
     append_n(&mut log, 3);
 
     let mut view: View<u64> = View::new("counter", counter_reducer, log.views_dir());
-    view.refresh(&log).unwrap();
+    view.refresh(&log.reader()).unwrap();
 
     let snapshot_path = log.views_dir().join("counter.snapshot.json");
     let content_before = fs::read_to_string(&snapshot_path).unwrap();
 
     // Append more events, then rebuild
     append_n(&mut log, 2);
-    view.rebuild(&log).unwrap();
+    view.rebuild(&log.reader()).unwrap();
 
     let content_after = fs::read_to_string(&snapshot_path).unwrap();
     // Snapshot should be rewritten with full replay (offset reflects all 5 events)
@@ -139,8 +139,8 @@ fn test_idempotent_refresh() {
     append_n(&mut log, 4);
 
     let mut view: View<u64> = View::new("counter", counter_reducer, log.views_dir());
-    let state1 = *view.refresh(&log).unwrap();
-    let state2 = *view.refresh(&log).unwrap();
+    let state1 = *view.refresh(&log.reader()).unwrap();
+    let state2 = *view.refresh(&log.reader()).unwrap();
     assert_eq!(state1, state2);
     assert_eq!(state1, 4);
 }
@@ -153,7 +153,7 @@ fn test_counter_reducer() {
     append_n(&mut log, n);
 
     let mut view: View<u64> = View::new("counter", counter_reducer, log.views_dir());
-    let state = view.refresh(&log).unwrap();
+    let state = view.refresh(&log.reader()).unwrap();
     assert_eq!(*state, n as u64);
 }
 
@@ -168,7 +168,7 @@ fn test_todo_add() {
     }
 
     let mut view: View<TodoState> = View::new("todos", todo_reducer, log.views_dir());
-    let state = view.refresh(&log).unwrap();
+    let state = view.refresh(&log.reader()).unwrap();
 
     assert_eq!(state.items.len(), 3);
     assert_eq!(state.items[0].text, "Buy milk");
@@ -193,7 +193,7 @@ fn test_todo_complete() {
     log.append(&complete).unwrap();
 
     let mut view: View<TodoState> = View::new("todos", todo_reducer, log.views_dir());
-    let state = view.refresh(&log).unwrap();
+    let state = view.refresh(&log.reader()).unwrap();
 
     assert_eq!(state.items.len(), 1);
     assert!(state.items[0].done);
@@ -214,7 +214,7 @@ fn test_todo_delete() {
     log.append(&delete).unwrap();
 
     let mut view: View<TodoState> = View::new("todos", todo_reducer, log.views_dir());
-    let state = view.refresh(&log).unwrap();
+    let state = view.refresh(&log.reader()).unwrap();
 
     assert_eq!(state.items.len(), 1);
     assert_eq!(state.items[0].text, "Walk dog");
@@ -234,8 +234,8 @@ fn test_two_views_different_reducers() {
     let mut counter_view: View<u64> = View::new("counter", counter_reducer, log.views_dir());
     let mut todo_view: View<TodoState> = View::new("todos", todo_reducer, log.views_dir());
 
-    let count = counter_view.refresh(&log).unwrap();
-    let todos = todo_view.refresh(&log).unwrap();
+    let count = counter_view.refresh(&log.reader()).unwrap();
+    let todos = todo_view.refresh(&log.reader()).unwrap();
 
     assert_eq!(*count, 2);
     assert_eq!(todos.items.len(), 2);
@@ -252,8 +252,8 @@ fn test_independent_snapshots() {
     let mut view_a: View<u64> = View::new("view_a", counter_reducer, log.views_dir());
     let mut view_b: View<u64> = View::new("view_b", counter_reducer, log.views_dir());
 
-    view_a.refresh(&log).unwrap();
-    view_b.refresh(&log).unwrap();
+    view_a.refresh(&log.reader()).unwrap();
+    view_b.refresh(&log.reader()).unwrap();
 
     let snap_a = log.views_dir().join("view_a.snapshot.json");
     let snap_b = log.views_dir().join("view_b.snapshot.json");
@@ -264,7 +264,7 @@ fn test_independent_snapshots() {
 
     // Append more, refresh only view_a
     append_n(&mut log, 2);
-    view_a.refresh(&log).unwrap();
+    view_a.refresh(&log.reader()).unwrap();
 
     assert_eq!(*view_a.state(), 5);
     assert_eq!(*view_b.state(), 3); // view_b not refreshed
@@ -278,6 +278,6 @@ fn test_late_view_creation() {
 
     // Create view after events already exist
     let mut view: View<u64> = View::new("counter", counter_reducer, log.views_dir());
-    let state = view.refresh(&log).unwrap();
+    let state = view.refresh(&log.reader()).unwrap();
     assert_eq!(*state, 10);
 }

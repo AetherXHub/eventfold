@@ -64,7 +64,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         log.append(&Event::new("todo_added", json!({"text": "fix bug"})))?;
 
         let mut view = View::new("todos", reducer_v1, &dir.path().join("views"));
-        view.refresh(&log)?;
+        view.refresh(&log.reader())?;
         println!("Before rebuild (v1): {:?}", view.state());
     }
 
@@ -72,7 +72,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     {
         let log = EventLog::open(dir.path())?;
         let mut view = View::new("todos", reducer_v2, &dir.path().join("views"));
-        view.rebuild(&log)?;
+        view.rebuild(&log.reader())?;
         println!("After rebuild (v2):  {:?}", view.state());
     }
 

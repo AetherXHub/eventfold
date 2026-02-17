@@ -13,12 +13,12 @@ fn test_valid_snapshot_accepted() {
     append_n(&mut log, 5);
 
     let mut view: View<u64> = View::new("counter", counter_reducer, log.views_dir());
-    view.refresh(&log).unwrap();
+    view.refresh(&log.reader()).unwrap();
     assert_eq!(*view.state(), 5);
 
     // Second refresh with no changes — snapshot should be accepted, not rebuilt
     append_n(&mut log, 3);
-    view.refresh(&log).unwrap();
+    view.refresh(&log.reader()).unwrap();
     assert_eq!(*view.state(), 8);
 }
 
@@ -31,7 +31,7 @@ fn test_offset_beyond_eof() {
     // Create a view and refresh to generate snapshot
     {
         let mut view: View<u64> = View::new("counter", counter_reducer, log.views_dir());
-        view.refresh(&log).unwrap();
+        view.refresh(&log.reader()).unwrap();
         assert_eq!(*view.state(), 5);
     }
 
@@ -47,7 +47,7 @@ fn test_offset_beyond_eof() {
     // Reopen log and create fresh view — should detect offset beyond EOF and rebuild
     let log = EventLog::open(dir.path()).unwrap();
     let mut view: View<u64> = View::new("counter", counter_reducer, log.views_dir());
-    let state = view.refresh(&log).unwrap();
+    let state = view.refresh(&log.reader()).unwrap();
     // The truncated file has partial data; state depends on what's parseable
     // The key assertion: it doesn't panic or return the old state of 5
     assert!(*state < 5);
@@ -62,7 +62,7 @@ fn test_hash_mismatch() {
     // Create view and refresh
     {
         let mut view: View<u64> = View::new("counter", counter_reducer, log.views_dir());
-        view.refresh(&log).unwrap();
+        view.refresh(&log.reader()).unwrap();
         assert_eq!(*view.state(), 5);
     }
 
@@ -92,7 +92,7 @@ fn test_hash_mismatch() {
     // Reopen log and create fresh view — should detect hash mismatch and rebuild
     let log = EventLog::open(dir.path()).unwrap();
     let mut view: View<u64> = View::new("counter", counter_reducer, log.views_dir());
-    let state = view.refresh(&log).unwrap();
+    let state = view.refresh(&log.reader()).unwrap();
     // After rebuild from modified log, should have 5 events (the content is still 5 lines)
     assert_eq!(*state, 5);
 }
@@ -106,7 +106,7 @@ fn test_empty_log_nonzero_offset() {
     // Create view and refresh
     {
         let mut view: View<u64> = View::new("counter", counter_reducer, log.views_dir());
-        view.refresh(&log).unwrap();
+        view.refresh(&log.reader()).unwrap();
         assert_eq!(*view.state(), 5);
     }
 
@@ -117,7 +117,7 @@ fn test_empty_log_nonzero_offset() {
     // Reopen log and create fresh view — should detect and rebuild (empty = default)
     let log = EventLog::open(dir.path()).unwrap();
     let mut view: View<u64> = View::new("counter", counter_reducer, log.views_dir());
-    let state = view.refresh(&log).unwrap();
+    let state = view.refresh(&log.reader()).unwrap();
     assert_eq!(*state, 0); // empty log → default state
 }
 
@@ -137,7 +137,7 @@ fn test_offset_zero_always_valid() {
 
     // Create view and refresh — offset 0 should always be considered valid
     let mut view: View<u64> = View::new("counter", counter_reducer, log.views_dir());
-    let state = view.refresh(&log).unwrap();
+    let state = view.refresh(&log.reader()).unwrap();
     // Snapshot with offset 0 is accepted (state = 42), no events to process
     assert_eq!(*state, 42);
 }
@@ -151,7 +151,7 @@ fn test_rebuild_correctness_after_integrity_failure() {
     // Create view and refresh
     {
         let mut view: View<u64> = View::new("counter", counter_reducer, log.views_dir());
-        view.refresh(&log).unwrap();
+        view.refresh(&log.reader()).unwrap();
         assert_eq!(*view.state(), 10);
     }
 
@@ -166,7 +166,7 @@ fn test_rebuild_correctness_after_integrity_failure() {
 
     // Create fresh view — should detect corruption and rebuild
     let mut view: View<u64> = View::new("counter", counter_reducer, log.views_dir());
-    let state = view.refresh(&log).unwrap();
+    let state = view.refresh(&log.reader()).unwrap();
     // After rebuild, should correctly count all 10 events
     assert_eq!(*state, 10);
 }
@@ -180,7 +180,7 @@ fn test_manual_log_edit_detected() {
     // Create view and refresh
     {
         let mut view: View<u64> = View::new("counter", counter_reducer, log.views_dir());
-        view.refresh(&log).unwrap();
+        view.refresh(&log.reader()).unwrap();
         assert_eq!(*view.state(), 3);
     }
 
@@ -205,7 +205,7 @@ fn test_manual_log_edit_detected() {
     // Reopen log and create fresh view — should detect hash mismatch
     let log = EventLog::open(dir.path()).unwrap();
     let mut view: View<u64> = View::new("counter", counter_reducer, log.views_dir());
-    let state = view.refresh(&log).unwrap();
+    let state = view.refresh(&log.reader()).unwrap();
     // After rebuild from modified log with 4 lines, should count 4
     assert_eq!(*state, 4);
 }
@@ -220,18 +220,18 @@ fn test_no_false_positives() {
     // Many cycles of append + refresh — no corruption, no false rebuilds
     for batch in 1..=10 {
         append_n(&mut log, 5);
-        let state = view.refresh(&log).unwrap();
+        let state = view.refresh(&log.reader()).unwrap();
         assert_eq!(*state, batch * 5);
     }
 
     // Drop and recreate the view — snapshot should load fine
     drop(view);
     let mut view: View<u64> = View::new("counter", counter_reducer, log.views_dir());
-    let state = view.refresh(&log).unwrap();
+    let state = view.refresh(&log.reader()).unwrap();
     assert_eq!(*state, 50);
 
     // One more batch after reload
     append_n(&mut log, 5);
-    let state = view.refresh(&log).unwrap();
+    let state = view.refresh(&log.reader()).unwrap();
     assert_eq!(*state, 55);
 }

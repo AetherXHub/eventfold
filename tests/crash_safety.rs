@@ -68,7 +68,7 @@ fn test_crash_during_snapshot_write() {
     // No final snapshot file exists — .tmp should be ignored
     let log = EventLog::open(dir.path()).unwrap();
     let mut view: View<u64> = View::new("counter", counter_reducer, log.views_dir());
-    view.refresh(&log).unwrap();
+    view.refresh(&log.reader()).unwrap();
 
     // State rebuilt correctly from events — bogus .tmp content (state=999) was not used
     assert_eq!(*view.state(), 5);
@@ -106,7 +106,7 @@ fn test_crash_after_archive_write_before_truncate() {
 
     // A fresh view rebuild double-counts (known limitation)
     let mut view: View<u64> = View::new("counter", counter_reducer, log.views_dir());
-    view.rebuild(&log).unwrap();
+    view.rebuild(&log.reader()).unwrap();
     assert_eq!(*view.state(), 10); // double-counted
 }
 

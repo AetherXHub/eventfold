@@ -170,7 +170,7 @@ fn test_new_view_after_rotation() {
 
     // Create a NEW view — no snapshot, should replay archive + active log
     let mut new_view: View<u64> = View::new("counter2", counter_reducer, log.views_dir());
-    new_view.refresh(&log).unwrap();
+    new_view.refresh(&log.reader()).unwrap();
     assert_eq!(*new_view.state(), 8);
 }
 
@@ -214,7 +214,7 @@ fn test_full_replay_matches_incremental() {
 
     // Create new view (full replay via read_full)
     let mut full_view: View<u64> = View::new("full_counter", counter_reducer, log.views_dir());
-    full_view.refresh(&log).unwrap();
+    full_view.refresh(&log.reader()).unwrap();
     let full_state = *full_view.state();
 
     assert_eq!(incremental_state, full_state);

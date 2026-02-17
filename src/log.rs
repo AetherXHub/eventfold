@@ -11,11 +11,279 @@ use std::path::{Path, PathBuf};
 /// Boxed iterator over `(Event, line_hash)` pairs from `read_full()`.
 type FullEventIter = Box<dyn Iterator<Item = io::Result<(Event, String)>>>;
 
+/// Exclusive writer for a single event log file.
+///
+/// Owns the append file handle and manages log rotation at the file level.
+/// For reading, use [`EventReader`] obtained via [`EventWriter::reader`].
+pub struct EventWriter {
+    file: File,
+    log_path: PathBuf,
+    archive_path: PathBuf,
+    views_dir: PathBuf,
+    max_log_size: u64,
+}
+
+impl EventWriter {
+    /// Open or create an event log directory for writing.
+    ///
+    /// Creates `dir/`, `dir/views/`, and `dir/app.jsonl` if they don't exist.
+    /// Opens `app.jsonl` in append mode.
+    pub fn open(dir: impl AsRef<Path>) -> io::Result<Self> {
+        let dir = dir.as_ref().to_path_buf();
+        let views_dir = dir.join("views");
+        let log_path = dir.join("app.jsonl");
+        let archive_path = dir.join("archive.jsonl.zst");
+
+        fs::create_dir_all(&views_dir)?;
+
+        let file = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&log_path)?;
+
+        Ok(EventWriter {
+            file,
+            log_path,
+            archive_path,
+            views_dir,
+            max_log_size: 0,
+        })
+    }
+
+    /// Append an event to the log. Returns the byte offset where the event starts.
+    ///
+    /// Does not trigger auto-rotation. For auto-rotation support, use [`EventLog`].
+    pub fn append(&mut self, event: &Event) -> io::Result<u64> {
+        let (offset, _) = self.append_raw(event)?;
+        Ok(offset)
+    }
+
+    /// Append an event and indicate whether rotation is needed.
+    ///
+    /// Returns `(offset, needs_rotate)`.
+    pub(crate) fn append_raw(&mut self, event: &Event) -> io::Result<(u64, bool)> {
+        let offset = self.file.seek(SeekFrom::End(0))?;
+        let json = serde_json::to_string(event)
+            .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+        writeln!(self.file, "{json}")?;
+        self.file.sync_data()?;
+
+        let needs_rotate =
+            self.max_log_size > 0 && self.active_log_size()? >= self.max_log_size;
+        Ok((offset, needs_rotate))
+    }
+
+    /// Manually trigger log rotation.
+    ///
+    /// Refreshes all views from the reader, compresses the active log to the
+    /// archive, truncates the active log, and resets all view offsets.
+    pub fn rotate(
+        &mut self,
+        reader: &EventReader,
+        views: &mut HashMap<String, Box<dyn ViewOps>>,
+    ) -> io::Result<()> {
+        // 1. Refresh all views so snapshots reflect everything in app.jsonl
+        for view in views.values_mut() {
+            view.refresh_boxed(reader)?;
+        }
+
+        // 2. Read active log contents
+        let contents = fs::read(&self.log_path)?;
+
+        // 3. No-op if empty
+        if contents.is_empty() {
+            return Ok(());
+        }
+
+        // 4. Compress and append to archive
+        archive::append_compressed_frame(&self.archive_path, &contents)?;
+
+        // 5. Truncate active log
+        self.file.set_len(0)?;
+        self.file.sync_data()?;
+
+        // 6. Reset all view offsets and save snapshots
+        for view in views.values_mut() {
+            view.reset_offset()?;
+        }
+
+        Ok(())
+    }
+
+    /// Get a cloneable reader pointing at the same log paths.
+    pub fn reader(&self) -> EventReader {
+        EventReader {
+            log_path: self.log_path.clone(),
+            archive_path: self.archive_path.clone(),
+        }
+    }
+
+    /// Returns the path to the data directory.
+    pub fn dir(&self) -> &Path {
+        self.log_path.parent().unwrap()
+    }
+
+    /// Returns the path to the active log file.
+    pub fn log_path(&self) -> &Path {
+        &self.log_path
+    }
+
+    /// Returns the path to the archive file.
+    pub fn archive_path(&self) -> &Path {
+        &self.archive_path
+    }
+
+    /// Returns the path to the `views/` directory.
+    pub fn views_dir(&self) -> &Path {
+        &self.views_dir
+    }
+
+    /// Returns the current size of `app.jsonl` in bytes.
+    pub fn active_log_size(&self) -> io::Result<u64> {
+        Ok(fs::metadata(&self.log_path)?.len())
+    }
+
+    /// Set the maximum active log size for auto-rotation checks.
+    pub(crate) fn set_max_log_size(&mut self, bytes: u64) {
+        self.max_log_size = bytes;
+    }
+}
+
+/// Cheap, cloneable reader for an event log.
+///
+/// Opens fresh file handles per read call. Safe to use concurrently
+/// with an [`EventWriter`] on the same log — completed lines are immutable,
+/// and partial lines at EOF are detected and skipped.
+#[derive(Debug, Clone)]
+pub struct EventReader {
+    log_path: PathBuf,
+    archive_path: PathBuf,
+}
+
+impl EventReader {
+    /// Create a reader pointing at the given log directory.
+    pub fn new(dir: impl AsRef<Path>) -> Self {
+        let dir = dir.as_ref();
+        EventReader {
+            log_path: dir.join("app.jsonl"),
+            archive_path: dir.join("archive.jsonl.zst"),
+        }
+    }
+
+    /// Read events from the active log starting at the given byte offset.
+    ///
+    /// Returns an iterator yielding `(event, next_byte_offset, line_hash)` for
+    /// each complete line. Empty lines are skipped. Partial lines (missing
+    /// trailing newline) are skipped silently.
+    pub fn read_from(
+        &self,
+        offset: u64,
+    ) -> io::Result<impl Iterator<Item = io::Result<(Event, u64, String)>>> {
+        let mut file = File::open(&self.log_path)?;
+        file.seek(SeekFrom::Start(offset))?;
+
+        let file_len = file.metadata()?.len();
+        let reader = BufReader::new(file);
+
+        Ok(LogIterator {
+            lines: reader.lines(),
+            pos: offset,
+            file_len,
+        })
+    }
+
+    /// Read the full event history: archive (if any) + active log.
+    ///
+    /// Returns an iterator yielding `(event, line_hash)` for each event
+    /// across all archived frames and the current active log.
+    pub fn read_full(&self) -> io::Result<FullEventIter> {
+        let archive_iter: Box<dyn Iterator<Item = io::Result<(Event, String)>>> =
+            match archive::open_archive_reader(&self.archive_path)? {
+                Some(reader) => Box::new(EventLineIter {
+                    reader,
+                    buf: String::new(),
+                }),
+                None => Box::new(std::iter::empty()),
+            };
+
+        let file = File::open(&self.log_path)?;
+        let reader = BufReader::new(file);
+        let active_iter: Box<dyn Iterator<Item = io::Result<(Event, String)>>> =
+            Box::new(EventLineIter {
+                reader,
+                buf: String::new(),
+            });
+
+        Ok(Box::new(archive_iter.chain(active_iter)))
+    }
+
+    /// Read the line immediately before the given byte offset and return its hash.
+    ///
+    /// The offset should point to the byte after the newline of the last consumed line.
+    /// Returns `None` if offset is 0 or beyond the file.
+    pub fn read_line_hash_before(&self, offset: u64) -> io::Result<Option<String>> {
+        if offset == 0 {
+            return Ok(None);
+        }
+
+        let mut file = File::open(&self.log_path)?;
+        let file_len = file.metadata()?.len();
+
+        if offset > file_len {
+            return Ok(None);
+        }
+
+        // offset - 1 is the '\n' at end of previous line
+        // Scan backwards from offset - 2 to find start of that line
+        let newline_pos = offset - 1;
+        let mut start = 0u64;
+
+        if newline_pos > 0 {
+            let scan_start = newline_pos.saturating_sub(8192);
+            file.seek(SeekFrom::Start(scan_start))?;
+            let mut buf = vec![0u8; (newline_pos - scan_start) as usize];
+            file.read_exact(&mut buf)?;
+
+            if let Some(pos) = buf.iter().rposition(|&b| b == b'\n') {
+                start = scan_start + pos as u64 + 1;
+            } else {
+                start = scan_start;
+            }
+        }
+
+        file.seek(SeekFrom::Start(start))?;
+        let line_len = (newline_pos - start) as usize;
+        let mut line_buf = vec![0u8; line_len];
+        file.read_exact(&mut line_buf)?;
+
+        Ok(Some(line_hash(&line_buf)))
+    }
+
+    /// Returns the current size of `app.jsonl` in bytes.
+    pub fn active_log_size(&self) -> io::Result<u64> {
+        Ok(fs::metadata(&self.log_path)?.len())
+    }
+
+    /// Returns the path to the active log file.
+    pub fn log_path(&self) -> &Path {
+        &self.log_path
+    }
+
+    /// Returns the path to the archive file.
+    pub fn archive_path(&self) -> &Path {
+        &self.archive_path
+    }
+}
+
 /// An append-only event log backed by files in a single directory.
 ///
 /// The log manages an active log file (`app.jsonl`), a compressed archive
 /// (`archive.jsonl.zst`), a views directory for snapshots, and an optional
 /// set of registered views for auto-rotation and bulk refresh.
+///
+/// Composes an [`EventWriter`] and [`EventReader`] with a view registry.
+/// For advanced use cases (multiple readers, direct writer access), use
+/// [`EventWriter`] and [`EventReader`] directly.
 ///
 /// Use [`EventLog::builder`] to configure views and auto-rotation, or
 /// [`EventLog::open`] for a bare log without registered views.
@@ -36,13 +304,9 @@ type FullEventIter = Box<dyn Iterator<Item = io::Result<(Event, String)>>>;
 /// assert_eq!(events.len(), 1);
 /// ```
 pub struct EventLog {
-    dir: PathBuf,
-    log_path: PathBuf,
-    archive_path: PathBuf,
-    file: File,
-    views_dir: PathBuf,
+    writer: EventWriter,
+    reader: EventReader,
     views: HashMap<String, Box<dyn ViewOps>>,
-    max_log_size: u64,
 }
 
 /// A factory closure that creates a boxed view given a views directory path.
@@ -100,35 +364,25 @@ impl EventLogBuilder {
     /// Creates the directory structure, initializes all registered views,
     /// and performs auto-rotation if the active log exceeds `max_log_size`.
     pub fn open(self) -> io::Result<EventLog> {
-        let dir = self.dir;
-        let views_dir = dir.join("views");
-        let log_path = dir.join("app.jsonl");
-        let archive_path = dir.join("archive.jsonl.zst");
-
-        fs::create_dir_all(&views_dir)?;
-
-        let file = OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(&log_path)?;
+        let mut writer = EventWriter::open(&self.dir)?;
+        writer.set_max_log_size(self.max_log_size);
+        let reader = writer.reader();
 
         let mut views = HashMap::new();
         for factory in self.view_factories {
-            let view = factory(&views_dir);
+            let view = factory(writer.views_dir());
             views.insert(view.view_name().to_string(), view);
         }
 
         let mut log = EventLog {
-            dir,
-            log_path,
-            archive_path,
-            file,
-            views_dir,
+            writer,
+            reader,
             views,
-            max_log_size: self.max_log_size,
         };
 
-        if log.max_log_size > 0 && log.active_log_size()? >= log.max_log_size {
+        if log.writer.max_log_size > 0
+            && log.reader.active_log_size()? >= log.writer.max_log_size
+        {
             log.rotate()?;
         }
 
@@ -148,26 +402,12 @@ impl EventLog {
     /// Creates the directory and `views/` subdirectory if they don't exist.
     /// Opens or creates `app.jsonl` in append mode.
     pub fn open(dir: impl AsRef<Path>) -> io::Result<Self> {
-        let dir = dir.as_ref().to_path_buf();
-        let views_dir = dir.join("views");
-        let log_path = dir.join("app.jsonl");
-        let archive_path = dir.join("archive.jsonl.zst");
-
-        fs::create_dir_all(&views_dir)?;
-
-        let file = OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(&log_path)?;
-
+        let writer = EventWriter::open(dir)?;
+        let reader = writer.reader();
         Ok(EventLog {
-            dir,
-            log_path,
-            archive_path,
-            file,
-            views_dir,
+            writer,
+            reader,
             views: HashMap::new(),
-            max_log_size: 0,
         })
     }
 
@@ -186,16 +426,10 @@ impl EventLog {
     /// and flushes to disk. Returns the byte offset where the event starts.
     /// May trigger auto-rotation if `max_log_size` is configured and exceeded.
     pub fn append(&mut self, event: &Event) -> io::Result<u64> {
-        let offset = self.file.seek(SeekFrom::End(0))?;
-        let json = serde_json::to_string(event)
-            .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
-        writeln!(self.file, "{json}")?;
-        self.file.sync_data()?;
-
-        if self.max_log_size > 0 && self.active_log_size()? >= self.max_log_size {
+        let (offset, needs_rotate) = self.writer.append_raw(event)?;
+        if needs_rotate {
             self.rotate()?;
         }
-
         Ok(offset)
     }
 
@@ -208,17 +442,7 @@ impl EventLog {
         &self,
         offset: u64,
     ) -> io::Result<impl Iterator<Item = io::Result<(Event, u64, String)>>> {
-        let mut file = File::open(&self.log_path)?;
-        file.seek(SeekFrom::Start(offset))?;
-
-        let file_len = file.metadata()?.len();
-        let reader = BufReader::new(file);
-
-        Ok(LogIterator {
-            lines: reader.lines(),
-            pos: offset,
-            file_len,
-        })
+        self.reader.read_from(offset)
     }
 
     /// Read the full event history: archive (if any) + active log.
@@ -226,24 +450,7 @@ impl EventLog {
     /// Returns an iterator yielding `(event, line_hash)` for each event
     /// across all archived frames and the current active log.
     pub fn read_full(&self) -> io::Result<FullEventIter> {
-        let archive_iter: Box<dyn Iterator<Item = io::Result<(Event, String)>>> =
-            match archive::open_archive_reader(&self.archive_path)? {
-                Some(reader) => Box::new(EventLineIter {
-                    reader,
-                    buf: String::new(),
-                }),
-                None => Box::new(std::iter::empty()),
-            };
-
-        let file = File::open(&self.log_path)?;
-        let reader = BufReader::new(file);
-        let active_iter: Box<dyn Iterator<Item = io::Result<(Event, String)>>> =
-            Box::new(EventLineIter {
-                reader,
-                buf: String::new(),
-            });
-
-        Ok(Box::new(archive_iter.chain(active_iter)))
+        self.reader.read_full()
     }
 
     /// Rotate the active log: refresh registered views, compress to archive,
@@ -251,55 +458,15 @@ impl EventLog {
     ///
     /// If the active log is empty, this is a no-op.
     pub fn rotate(&mut self) -> io::Result<()> {
-        let mut views = std::mem::take(&mut self.views);
-        let result = self.rotate_inner(&mut views);
-        self.views = views;
-        result
-    }
-
-    fn rotate_inner(
-        &mut self,
-        views: &mut HashMap<String, Box<dyn ViewOps>>,
-    ) -> io::Result<()> {
-        // 1. Refresh all views so snapshots reflect everything in app.jsonl
-        for view in views.values_mut() {
-            view.refresh_boxed(self)?;
-        }
-
-        // 2. Read active log contents
-        let contents = fs::read(&self.log_path)?;
-
-        // 3. No-op if empty
-        if contents.is_empty() {
-            return Ok(());
-        }
-
-        // 4. Compress and append to archive
-        archive::append_compressed_frame(&self.archive_path, &contents)?;
-
-        // 5. Truncate active log
-        self.file.set_len(0)?;
-        self.file.sync_data()?;
-
-        // 6. Reset all view offsets and save snapshots
-        for view in views.values_mut() {
-            view.reset_offset()?;
-        }
-
-        Ok(())
+        self.writer.rotate(&self.reader, &mut self.views)
     }
 
     /// Refresh all registered views from the event log.
     pub fn refresh_all(&mut self) -> io::Result<()> {
-        let mut views = std::mem::take(&mut self.views);
-        let result = (|| {
-            for view in views.values_mut() {
-                view.refresh_boxed(self)?;
-            }
-            Ok(())
-        })();
-        self.views = views;
-        result
+        for view in self.views.values_mut() {
+            view.refresh_boxed(&self.reader)?;
+        }
+        Ok(())
     }
 
     /// Get a reference to a registered view's current state by name.
@@ -328,29 +495,44 @@ impl EventLog {
         Ok(typed.state())
     }
 
+    /// Get a cloneable reader for this log.
+    pub fn reader(&self) -> EventReader {
+        self.reader.clone()
+    }
+
+    /// Get a reference to the inner writer.
+    pub fn writer(&self) -> &EventWriter {
+        &self.writer
+    }
+
+    /// Get a mutable reference to the inner writer.
+    pub fn writer_mut(&mut self) -> &mut EventWriter {
+        &mut self.writer
+    }
+
     /// Returns the path to the data directory.
     pub fn dir(&self) -> &Path {
-        &self.dir
+        self.writer.dir()
     }
 
     /// Returns the path to the active log file.
     pub fn log_path(&self) -> &Path {
-        &self.log_path
+        self.writer.log_path()
     }
 
     /// Returns the path to the archive file.
     pub fn archive_path(&self) -> &Path {
-        &self.archive_path
+        self.writer.archive_path()
     }
 
     /// Returns the path to the views directory.
     pub fn views_dir(&self) -> &Path {
-        &self.views_dir
+        self.writer.views_dir()
     }
 
     /// Returns the current size in bytes of the active log file.
     pub fn active_log_size(&self) -> io::Result<u64> {
-        Ok(fs::metadata(&self.log_path)?.len())
+        self.reader.active_log_size()
     }
 
     /// Read the line immediately before the given byte offset and return its hash.
@@ -358,41 +540,7 @@ impl EventLog {
     /// The offset should point to the byte after the newline of the last consumed line.
     /// Returns `None` if offset is 0.
     pub fn read_line_hash_before(&self, offset: u64) -> io::Result<Option<String>> {
-        if offset == 0 {
-            return Ok(None);
-        }
-
-        let mut file = File::open(&self.log_path)?;
-        let file_len = file.metadata()?.len();
-
-        if offset > file_len {
-            return Ok(None);
-        }
-
-        // offset - 1 is the '\n' at end of previous line
-        // Scan backwards from offset - 2 to find start of that line
-        let newline_pos = offset - 1;
-        let mut start = 0u64;
-
-        if newline_pos > 0 {
-            let scan_start = newline_pos.saturating_sub(8192);
-            file.seek(SeekFrom::Start(scan_start))?;
-            let mut buf = vec![0u8; (newline_pos - scan_start) as usize];
-            file.read_exact(&mut buf)?;
-
-            if let Some(pos) = buf.iter().rposition(|&b| b == b'\n') {
-                start = scan_start + pos as u64 + 1;
-            } else {
-                start = scan_start;
-            }
-        }
-
-        file.seek(SeekFrom::Start(start))?;
-        let line_len = (newline_pos - start) as usize;
-        let mut line_buf = vec![0u8; line_len];
-        file.read_exact(&mut line_buf)?;
-
-        Ok(Some(line_hash(&line_buf)))
+        self.reader.read_line_hash_before(offset)
     }
 }
 
