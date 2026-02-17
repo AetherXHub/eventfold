@@ -195,14 +195,8 @@ fn test_hash_determinism() {
     let mut log = EventLog::open(dir.path()).unwrap();
 
     // Append two identical events (same content, same ts)
-    let event = Event {
-        event_type: "same".to_string(),
-        data: json!({"x": 1}),
-        ts: 5000,
-        id: None,
-        actor: None,
-        meta: None,
-    };
+    let mut event = Event::new("same", json!({"x": 1}));
+    event.ts = 5000;
     log.append(&event).unwrap();
     log.append(&event).unwrap();
 
@@ -295,20 +289,14 @@ fn test_special_characters() {
     let dir = tempdir().unwrap();
     let mut log = EventLog::open(dir.path()).unwrap();
 
-    let event = Event {
-        event_type: "special".to_string(),
-        data: json!({
-            "emoji": "Hello 🌍🦀",
-            "newline": "line1\nline2",
-            "quote": "He said \"hi\"",
-            "unicode": "日本語",
-            "backslash": "path\\to\\file"
-        }),
-        ts: 2000,
-        id: None,
-        actor: None,
-        meta: None,
-    };
+    let mut event = Event::new("special", json!({
+        "emoji": "Hello 🌍🦀",
+        "newline": "line1\nline2",
+        "quote": "He said \"hi\"",
+        "unicode": "日本語",
+        "backslash": "path\\to\\file"
+    }));
+    event.ts = 2000;
     log.append(&event).unwrap();
 
     let events: Vec<_> = log

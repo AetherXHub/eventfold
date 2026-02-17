@@ -6,14 +6,9 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 
 pub fn dummy_event(event_type: &str) -> Event {
-    Event {
-        event_type: event_type.to_string(),
-        data: json!({"key": "value"}),
-        ts: 1000,
-        id: None,
-        actor: None,
-        meta: None,
-    }
+    let mut e = Event::new(event_type, json!({"key": "value"}));
+    e.ts = 1000;
+    e
 }
 
 pub fn append_n(log: &mut EventLog, n: usize) {

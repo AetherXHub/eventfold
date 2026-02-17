@@ -16,13 +16,10 @@ fn arb_event_type() -> impl Strategy<Value = String> {
 }
 
 fn arb_event() -> impl Strategy<Value = Event> {
-    (arb_event_type(), any::<u64>()).prop_map(|(t, ts)| Event {
-        event_type: t,
-        data: json!({"value": ts % 100}),
-        ts,
-        id: None,
-        actor: None,
-        meta: None,
+    (arb_event_type(), any::<u64>()).prop_map(|(t, ts)| {
+        let mut e = Event::new(&t, json!({"value": ts % 100}));
+        e.ts = ts;
+        e
     })
 }
 

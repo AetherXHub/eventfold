@@ -166,11 +166,7 @@ where
             self.hash = new_hash;
             snapshot::save(
                 &self.snapshot_path,
-                &Snapshot {
-                    state: self.state.clone(),
-                    offset: self.offset,
-                    hash: self.hash.clone(),
-                },
+                &Snapshot::new(self.state.clone(), self.offset, self.hash.clone()),
             )?;
         }
 

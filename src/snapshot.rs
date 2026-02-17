@@ -23,6 +23,7 @@ use std::path::Path;
 /// }
 /// ```
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct Snapshot<S> {
     /// The derived state at the time of the snapshot.
     pub state: S,
@@ -35,6 +36,17 @@ pub struct Snapshot<S> {
     /// Hex-encoded xxh64 hash of the last event line processed.
     /// Used for integrity verification on the next refresh.
     pub hash: String,
+}
+
+impl<S> Snapshot<S> {
+    /// Create a new snapshot.
+    pub fn new(state: S, offset: u64, hash: String) -> Self {
+        Snapshot {
+            state,
+            offset,
+            hash,
+        }
+    }
 }
 
 /// Save a snapshot atomically to disk.

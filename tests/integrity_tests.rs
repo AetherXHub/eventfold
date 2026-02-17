@@ -125,11 +125,7 @@ fn test_offset_zero_always_valid() {
 
     // Manually create a snapshot with offset 0
     let snapshot_path = log.views_dir().join("counter.snapshot.json");
-    let snap = Snapshot {
-        state: 42u64,
-        offset: 0,
-        hash: String::new(),
-    };
+    let snap = Snapshot::new(42u64, 0, String::new());
     eventfold::snapshot::save(&snapshot_path, &snap).unwrap();
 
     // Create view and refresh — offset 0 should always be considered valid
@@ -154,11 +150,7 @@ fn test_rebuild_correctness_after_integrity_failure() {
 
     // Corrupt: write bogus snapshot with offset beyond EOF
     let snapshot_path = log.views_dir().join("counter.snapshot.json");
-    let bogus_snap = Snapshot {
-        state: 9999u64,
-        offset: 999999,
-        hash: "bogus".to_string(),
-    };
+    let bogus_snap = Snapshot::new(9999u64, 999999, "bogus".to_string());
     eventfold::snapshot::save(&snapshot_path, &bogus_snap).unwrap();
 
     // Create fresh view — should detect corruption and rebuild

@@ -15,14 +15,14 @@ fn test_save_load_round_trip() {
     let dir = tempdir().unwrap();
     let path = dir.path().join("test.snapshot.json");
 
-    let snap = Snapshot {
-        state: TestState {
+    let snap = Snapshot::new(
+        TestState {
             count: 42,
             items: vec!["hello".into(), "world".into()],
         },
-        offset: 1024,
-        hash: "abcdef0123456789".into(),
-    };
+        1024,
+        "abcdef0123456789".into(),
+    );
 
     snapshot::save(&path, &snap).unwrap();
     let loaded: Snapshot<TestState> = snapshot::load(&path).unwrap().unwrap();
@@ -47,11 +47,7 @@ fn test_no_tmp_file_after_save() {
     let path = dir.path().join("test.snapshot.json");
     let tmp_path = path.with_extension("json.tmp");
 
-    let snap = Snapshot {
-        state: TestState::default(),
-        offset: 0,
-        hash: String::new(),
-    };
+    let snap = Snapshot::new(TestState::default(), 0, String::new());
 
     snapshot::save(&path, &snap).unwrap();
 
@@ -64,14 +60,14 @@ fn test_delete_removes_file() {
     let dir = tempdir().unwrap();
     let path = dir.path().join("test.snapshot.json");
 
-    let snap = Snapshot {
-        state: TestState {
+    let snap = Snapshot::new(
+        TestState {
             count: 1,
             items: vec!["item".into()],
         },
-        offset: 100,
-        hash: "hash".into(),
-    };
+        100,
+        "hash".into(),
+    );
 
     snapshot::save(&path, &snap).unwrap();
     assert!(path.exists());
@@ -101,11 +97,7 @@ fn test_empty_state() {
     let dir = tempdir().unwrap();
     let path = dir.path().join("empty.snapshot.json");
 
-    let snap = Snapshot {
-        state: Empty {},
-        offset: 0,
-        hash: String::new(),
-    };
+    let snap = Snapshot::new(Empty {}, 0, String::new());
 
     snapshot::save(&path, &snap).unwrap();
     let loaded: Snapshot<Empty> = snapshot::load(&path).unwrap().unwrap();
@@ -130,17 +122,17 @@ fn test_nested_state() {
     let dir = tempdir().unwrap();
     let path = dir.path().join("nested.snapshot.json");
 
-    let snap = Snapshot {
-        state: Outer {
+    let snap = Snapshot::new(
+        Outer {
             name: "root".into(),
             inner: Inner {
                 value: "deep".into(),
             },
             tags: vec!["a".into(), "b".into()],
         },
-        offset: 500,
-        hash: "nested_hash".into(),
-    };
+        500,
+        "nested_hash".into(),
+    );
 
     snapshot::save(&path, &snap).unwrap();
     let loaded: Snapshot<Outer> = snapshot::load(&path).unwrap().unwrap();
@@ -153,14 +145,14 @@ fn test_large_state() {
     let path = dir.path().join("large.snapshot.json");
 
     let items: Vec<String> = (0..1000).map(|i| format!("item_{i}")).collect();
-    let snap = Snapshot {
-        state: TestState {
+    let snap = Snapshot::new(
+        TestState {
             count: 1000,
             items,
         },
-        offset: 99999,
-        hash: "large_hash".into(),
-    };
+        99999,
+        "large_hash".into(),
+    );
 
     snapshot::save(&path, &snap).unwrap();
     let loaded: Snapshot<TestState> = snapshot::load(&path).unwrap().unwrap();
@@ -175,14 +167,14 @@ fn test_offset_zero() {
     let dir = tempdir().unwrap();
     let path = dir.path().join("zero.snapshot.json");
 
-    let snap = Snapshot {
-        state: TestState {
+    let snap = Snapshot::new(
+        TestState {
             count: 5,
             items: vec!["after_rotation".into()],
         },
-        offset: 0,
-        hash: String::new(),
-    };
+        0,
+        String::new(),
+    );
 
     snapshot::save(&path, &snap).unwrap();
     let loaded: Snapshot<TestState> = snapshot::load(&path).unwrap().unwrap();
@@ -197,11 +189,7 @@ fn test_large_offset() {
     let path = dir.path().join("large_offset.snapshot.json");
 
     let large_offset = u64::MAX / 2;
-    let snap = Snapshot {
-        state: TestState::default(),
-        offset: large_offset,
-        hash: "big_offset_hash".into(),
-    };
+    let snap = Snapshot::new(TestState::default(), large_offset, "big_offset_hash".into());
 
     snapshot::save(&path, &snap).unwrap();
     let loaded: Snapshot<TestState> = snapshot::load(&path).unwrap().unwrap();
@@ -241,11 +229,7 @@ fn test_tmp_cleanup_on_delete() {
     let tmp_path = path.with_extension("json.tmp");
 
     // Create both the snapshot and a leftover .tmp file
-    let snap = Snapshot {
-        state: TestState::default(),
-        offset: 0,
-        hash: String::new(),
-    };
+    let snap = Snapshot::new(TestState::default(), 0, String::new());
     snapshot::save(&path, &snap).unwrap();
 
     // Manually create a .tmp file (simulating crash during previous save)
@@ -267,23 +251,23 @@ fn test_save_overwrites_existing() {
     let dir = tempdir().unwrap();
     let path = dir.path().join("overwrite.snapshot.json");
 
-    let snap1 = Snapshot {
-        state: TestState {
+    let snap1 = Snapshot::new(
+        TestState {
             count: 1,
             items: vec!["first".into()],
         },
-        offset: 10,
-        hash: "hash1".into(),
-    };
+        10,
+        "hash1".into(),
+    );
 
-    let snap2 = Snapshot {
-        state: TestState {
+    let snap2 = Snapshot::new(
+        TestState {
             count: 2,
             items: vec!["second".into()],
         },
-        offset: 20,
-        hash: "hash2".into(),
-    };
+        20,
+        "hash2".into(),
+    );
 
     snapshot::save(&path, &snap1).unwrap();
     snapshot::save(&path, &snap2).unwrap();
@@ -300,14 +284,14 @@ fn test_snapshot_is_pretty_printed() {
     let dir = tempdir().unwrap();
     let path = dir.path().join("pretty.snapshot.json");
 
-    let snap = Snapshot {
-        state: TestState {
+    let snap = Snapshot::new(
+        TestState {
             count: 1,
             items: vec!["item".into()],
         },
-        offset: 100,
-        hash: "abc".into(),
-    };
+        100,
+        "abc".into(),
+    );
 
     snapshot::save(&path, &snap).unwrap();
 
@@ -330,14 +314,14 @@ fn test_wrong_type_returns_none() {
     let path = dir.path().join("wrong_type.snapshot.json");
 
     // Save as TestState
-    let snap = Snapshot {
-        state: TestState {
+    let snap = Snapshot::new(
+        TestState {
             count: 42,
             items: vec!["hello".into()],
         },
-        offset: 100,
-        hash: "hash".into(),
-    };
+        100,
+        "hash".into(),
+    );
     snapshot::save(&path, &snap).unwrap();
 
     // Try to load as OtherState — fields don't match, should return None

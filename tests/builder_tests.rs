@@ -45,14 +45,7 @@ fn test_refresh_all() {
         .open()
         .unwrap();
 
-    let event = Event {
-        event_type: "todo_added".to_string(),
-        data: json!({"text": "buy milk"}),
-        ts: 1000,
-        id: None,
-        actor: None,
-        meta: None,
-    };
+    let event = Event::new("todo_added", json!({"text": "buy milk"}));
     log.append(&event).unwrap();
     log.append(&dummy_event("something")).unwrap();
 
@@ -184,24 +177,10 @@ fn test_full_lifecycle() {
         .unwrap();
 
     // Append events
-    let event1 = Event {
-        event_type: "todo_added".to_string(),
-        data: json!({"text": "buy milk"}),
-        ts: 1000,
-        id: None,
-        actor: None,
-        meta: None,
-    };
+    let event1 = Event::new("todo_added", json!({"text": "buy milk"}));
     log.append(&event1).unwrap();
 
-    let event2 = Event {
-        event_type: "todo_added".to_string(),
-        data: json!({"text": "walk dog"}),
-        ts: 2000,
-        id: None,
-        actor: None,
-        meta: None,
-    };
+    let event2 = Event::new("todo_added", json!({"text": "walk dog"}));
     log.append(&event2).unwrap();
 
     // Refresh and check
@@ -216,14 +195,7 @@ fn test_full_lifecycle() {
     assert_eq!(log.active_log_size().unwrap(), 0);
 
     // Append more
-    let event3 = Event {
-        event_type: "todo_completed".to_string(),
-        data: json!({"id": 0}),
-        ts: 3000,
-        id: None,
-        actor: None,
-        meta: None,
-    };
+    let event3 = Event::new("todo_completed", json!({"id": 0}));
     log.append(&event3).unwrap();
 
     // Refresh again

@@ -5,6 +5,13 @@ use eventfold::Event;
 use serde_json::json;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+/// Helper to create an Event with a specific ts value.
+fn event_with_ts(event_type: &str, data: serde_json::Value, ts: u64) -> Event {
+    let mut e = Event::new(event_type, data);
+    e.ts = ts;
+    e
+}
+
 #[test]
 fn test_round_trip() {
     let event = dummy_event("test_event");
@@ -15,14 +22,7 @@ fn test_round_trip() {
 
 #[test]
 fn test_field_preservation() {
-    let event = Event {
-        event_type: "my_type".to_string(),
-        data: json!({"count": 42, "name": "alice"}),
-        ts: 1700000000,
-        id: None,
-        actor: None,
-        meta: None,
-    };
+    let event = event_with_ts("my_type", json!({"count": 42, "name": "alice"}), 1700000000);
     let json = serde_json::to_string(&event).unwrap();
     let deserialized: Event = serde_json::from_str(&json).unwrap();
 
@@ -43,14 +43,7 @@ fn test_arbitrary_data_nested_objects() {
             }
         }
     });
-    let event = Event {
-        event_type: "nested".to_string(),
-        data: data.clone(),
-        ts: 1000,
-        id: None,
-        actor: None,
-        meta: None,
-    };
+    let event = event_with_ts("nested", data.clone(), 1000);
     let json = serde_json::to_string(&event).unwrap();
     let deserialized: Event = serde_json::from_str(&json).unwrap();
     assert_eq!(deserialized.data, data);
@@ -62,14 +55,7 @@ fn test_arbitrary_data_arrays() {
         "tags": ["rust", "event-sourcing", "crate"],
         "scores": [1, 2, 3, 4, 5]
     });
-    let event = Event {
-        event_type: "arrays".to_string(),
-        data: data.clone(),
-        ts: 1000,
-        id: None,
-        actor: None,
-        meta: None,
-    };
+    let event = event_with_ts("arrays", data.clone(), 1000);
     let json = serde_json::to_string(&event).unwrap();
     let deserialized: Event = serde_json::from_str(&json).unwrap();
     assert_eq!(deserialized.data, data);
@@ -82,14 +68,7 @@ fn test_arbitrary_data_nulls() {
         "absent": null,
         "nested": {"also_null": null}
     });
-    let event = Event {
-        event_type: "nulls".to_string(),
-        data: data.clone(),
-        ts: 1000,
-        id: None,
-        actor: None,
-        meta: None,
-    };
+    let event = event_with_ts("nulls", data.clone(), 1000);
     let json = serde_json::to_string(&event).unwrap();
     let deserialized: Event = serde_json::from_str(&json).unwrap();
     assert_eq!(deserialized.data, data);
@@ -104,14 +83,7 @@ fn test_arbitrary_data_numbers() {
         "zero": 0,
         "large": 9999999999u64
     });
-    let event = Event {
-        event_type: "numbers".to_string(),
-        data: data.clone(),
-        ts: 1000,
-        id: None,
-        actor: None,
-        meta: None,
-    };
+    let event = event_with_ts("numbers", data.clone(), 1000);
     let json = serde_json::to_string(&event).unwrap();
     let deserialized: Event = serde_json::from_str(&json).unwrap();
     assert_eq!(deserialized.data, data);
@@ -119,14 +91,7 @@ fn test_arbitrary_data_numbers() {
 
 #[test]
 fn test_arbitrary_data_empty_object() {
-    let event = Event {
-        event_type: "empty".to_string(),
-        data: json!({}),
-        ts: 1000,
-        id: None,
-        actor: None,
-        meta: None,
-    };
+    let event = event_with_ts("empty", json!({}), 1000);
     let json = serde_json::to_string(&event).unwrap();
     let deserialized: Event = serde_json::from_str(&json).unwrap();
     assert_eq!(deserialized.data, json!({}));
@@ -134,14 +99,7 @@ fn test_arbitrary_data_empty_object() {
 
 #[test]
 fn test_arbitrary_data_string_value() {
-    let event = Event {
-        event_type: "string_data".to_string(),
-        data: json!("just a string"),
-        ts: 1000,
-        id: None,
-        actor: None,
-        meta: None,
-    };
+    let event = event_with_ts("string_data", json!("just a string"), 1000);
     let json = serde_json::to_string(&event).unwrap();
     let deserialized: Event = serde_json::from_str(&json).unwrap();
     assert_eq!(deserialized.data, json!("just a string"));
@@ -159,18 +117,15 @@ fn test_single_line_output() {
 
 #[test]
 fn test_single_line_output_with_complex_data() {
-    let event = Event {
-        event_type: "complex".to_string(),
-        data: json!({
+    let event = event_with_ts(
+        "complex",
+        json!({
             "nested": {"deep": {"deeper": "value"}},
             "array": [1, 2, 3],
             "null_field": null
         }),
-        ts: 1000,
-        id: None,
-        actor: None,
-        meta: None,
-    };
+        1000,
+    );
     let json = serde_json::to_string(&event).unwrap();
     assert!(
         !json.contains('\n'),
@@ -180,14 +135,11 @@ fn test_single_line_output_with_complex_data() {
 
 #[test]
 fn test_embedded_newlines_in_data() {
-    let event = Event {
-        event_type: "multiline".to_string(),
-        data: json!({"text": "line one\nline two\nline three"}),
-        ts: 1000,
-        id: None,
-        actor: None,
-        meta: None,
-    };
+    let event = event_with_ts(
+        "multiline",
+        json!({"text": "line one\nline two\nline three"}),
+        1000,
+    );
     let json = serde_json::to_string(&event).unwrap();
     assert!(
         !json.contains('\n'),
@@ -210,14 +162,7 @@ fn test_special_characters_unicode() {
         "japanese": "こんにちは",
         "arabic": "مرحبا"
     });
-    let event = Event {
-        event_type: "unicode".to_string(),
-        data: data.clone(),
-        ts: 1000,
-        id: None,
-        actor: None,
-        meta: None,
-    };
+    let event = event_with_ts("unicode", data.clone(), 1000);
     let json = serde_json::to_string(&event).unwrap();
     let deserialized: Event = serde_json::from_str(&json).unwrap();
     assert_eq!(deserialized.data, data);
@@ -230,14 +175,7 @@ fn test_special_characters_escaped_quotes() {
         "backslash": "path\\to\\file",
         "tab": "col1\tcol2"
     });
-    let event = Event {
-        event_type: "escapes".to_string(),
-        data: data.clone(),
-        ts: 1000,
-        id: None,
-        actor: None,
-        meta: None,
-    };
+    let event = event_with_ts("escapes", data.clone(), 1000);
     let json = serde_json::to_string(&event).unwrap();
     let deserialized: Event = serde_json::from_str(&json).unwrap();
     assert_eq!(deserialized.data, data);
@@ -248,14 +186,7 @@ fn test_special_characters_mixed() {
     let data = json!({
         "mixed": "Hello 🌍\n\"quoted\"\ttab\\backslash"
     });
-    let event = Event {
-        event_type: "mixed".to_string(),
-        data: data.clone(),
-        ts: 1000,
-        id: None,
-        actor: None,
-        meta: None,
-    };
+    let event = event_with_ts("mixed", data.clone(), 1000);
     let json = serde_json::to_string(&event).unwrap();
     assert!(!json.contains('\n'));
     let deserialized: Event = serde_json::from_str(&json).unwrap();
@@ -408,14 +339,7 @@ fn test_metadata_builder_chaining() {
 
 #[test]
 fn test_serialize_without_metadata() {
-    let event = Event {
-        event_type: "test".to_string(),
-        data: json!({"x": 1}),
-        ts: 1000,
-        id: None,
-        actor: None,
-        meta: None,
-    };
+    let event = event_with_ts("test", json!({"x": 1}), 1000);
     let json = serde_json::to_string(&event).unwrap();
 
     // Should not contain id, actor, or meta keys
