@@ -10,6 +10,9 @@ pub fn dummy_event(event_type: &str) -> Event {
         event_type: event_type.to_string(),
         data: json!({"key": "value"}),
         ts: 1000,
+        id: None,
+        actor: None,
+        meta: None,
     }
 }
 

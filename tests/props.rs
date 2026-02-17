@@ -20,6 +20,9 @@ fn arb_event() -> impl Strategy<Value = Event> {
         event_type: t,
         data: json!({"value": ts % 100}),
         ts,
+        id: None,
+        actor: None,
+        meta: None,
     })
 }
 

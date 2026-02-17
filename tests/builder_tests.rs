@@ -49,6 +49,9 @@ fn test_refresh_all() {
         event_type: "todo_added".to_string(),
         data: json!({"text": "buy milk"}),
         ts: 1000,
+        id: None,
+        actor: None,
+        meta: None,
     };
     log.append(&event).unwrap();
     log.append(&dummy_event("something")).unwrap();
@@ -185,6 +188,9 @@ fn test_full_lifecycle() {
         event_type: "todo_added".to_string(),
         data: json!({"text": "buy milk"}),
         ts: 1000,
+        id: None,
+        actor: None,
+        meta: None,
     };
     log.append(&event1).unwrap();
 
@@ -192,6 +198,9 @@ fn test_full_lifecycle() {
         event_type: "todo_added".to_string(),
         data: json!({"text": "walk dog"}),
         ts: 2000,
+        id: None,
+        actor: None,
+        meta: None,
     };
     log.append(&event2).unwrap();
 
@@ -211,6 +220,9 @@ fn test_full_lifecycle() {
         event_type: "todo_completed".to_string(),
         data: json!({"id": 0}),
         ts: 3000,
+        id: None,
+        actor: None,
+        meta: None,
     };
     log.append(&event3).unwrap();
 

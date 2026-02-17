@@ -196,6 +196,9 @@ fn test_hash_determinism() {
         event_type: "same".to_string(),
         data: json!({"x": 1}),
         ts: 5000,
+        id: None,
+        actor: None,
+        meta: None,
     };
     log.append(&event).unwrap();
     log.append(&event).unwrap();
@@ -299,6 +302,9 @@ fn test_special_characters() {
             "backslash": "path\\to\\file"
         }),
         ts: 2000,
+        id: None,
+        actor: None,
+        meta: None,
     };
     log.append(&event).unwrap();
 
