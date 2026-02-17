@@ -96,8 +96,8 @@ fn test_read_from_offset() {
     let mut offsets = Vec::new();
     for i in 0..5 {
         let event = dummy_event(&format!("event_{i}"));
-        let offset = log.append(&event).unwrap();
-        offsets.push(offset);
+        let result = log.append(&event).unwrap();
+        offsets.push(result.start_offset);
     }
 
     // Read from the offset of the 3rd event (index 2)
@@ -121,8 +121,8 @@ fn test_byte_offset_correctness() {
     let mut offsets = Vec::new();
     for i in 0..5 {
         let event = dummy_event(&format!("event_{i}"));
-        let offset = log.append(&event).unwrap();
-        offsets.push(offset);
+        let result = log.append(&event).unwrap();
+        offsets.push(result.start_offset);
     }
 
     // Each offset should seek to exactly that event
@@ -388,18 +388,90 @@ fn test_append_returns_incrementing_offsets() {
     let dir = tempdir().unwrap();
     let mut log = EventLog::open(dir.path()).unwrap();
 
-    let offset0 = log.append(&dummy_event("a")).unwrap();
-    let offset1 = log.append(&dummy_event("b")).unwrap();
-    let offset2 = log.append(&dummy_event("c")).unwrap();
+    let r0 = log.append(&dummy_event("a")).unwrap();
+    let r1 = log.append(&dummy_event("b")).unwrap();
+    let r2 = log.append(&dummy_event("c")).unwrap();
 
-    assert_eq!(offset0, 0, "first event should start at offset 0");
+    assert_eq!(r0.start_offset, 0, "first event should start at offset 0");
     assert!(
-        offset1 > offset0,
+        r1.start_offset > r0.start_offset,
         "second offset should be greater than first"
     );
     assert!(
-        offset2 > offset1,
+        r2.start_offset > r1.start_offset,
         "third offset should be greater than second"
+    );
+}
+
+#[test]
+fn test_append_result_start_offset() {
+    let dir = tempdir().unwrap();
+    let mut log = EventLog::open(dir.path()).unwrap();
+
+    let result = log.append(&dummy_event("first")).unwrap();
+    assert_eq!(result.start_offset, 0, "first append to empty log has start_offset == 0");
+}
+
+#[test]
+fn test_append_result_end_offset() {
+    let dir = tempdir().unwrap();
+    let mut log = EventLog::open(dir.path()).unwrap();
+
+    let event = dummy_event("test");
+    let json = serde_json::to_string(&event).unwrap();
+    let expected_end = json.len() as u64 + 1; // +1 for '\n'
+
+    let result = log.append(&event).unwrap();
+    assert_eq!(result.start_offset, 0);
+    assert_eq!(result.end_offset, expected_end);
+}
+
+#[test]
+fn test_append_result_consecutive() {
+    let dir = tempdir().unwrap();
+    let mut log = EventLog::open(dir.path()).unwrap();
+
+    let r1 = log.append(&dummy_event("a")).unwrap();
+    let r2 = log.append(&dummy_event("b")).unwrap();
+
+    assert_eq!(
+        r2.start_offset, r1.end_offset,
+        "second append's start_offset should equal first's end_offset"
+    );
+}
+
+#[test]
+fn test_append_result_hash_matches_read() {
+    let dir = tempdir().unwrap();
+    let mut log = EventLog::open(dir.path()).unwrap();
+
+    let result = log.append(&dummy_event("test")).unwrap();
+
+    let events: Vec<_> = log
+        .read_from(result.start_offset)
+        .unwrap()
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap();
+
+    assert_eq!(events.len(), 1);
+    assert_eq!(
+        events[0].2, result.line_hash,
+        "hash from AppendResult should match hash from read_from"
+    );
+}
+
+#[test]
+fn test_append_result_hash_deterministic() {
+    let dir = tempdir().unwrap();
+    let mut log = EventLog::open(dir.path()).unwrap();
+
+    let event = dummy_event("same");
+    let r1 = log.append(&event).unwrap();
+    let r2 = log.append(&event).unwrap();
+
+    assert_eq!(
+        r1.line_hash, r2.line_hash,
+        "same event appended twice should produce same hash"
     );
 }
 

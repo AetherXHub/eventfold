@@ -138,8 +138,8 @@ fn test_eventlog_delegates_append() {
     let dir = tempdir().unwrap();
     let mut log = EventLog::open(dir.path()).unwrap();
 
-    let offset = log.append(&dummy_event("test")).unwrap();
-    assert_eq!(offset, 0);
+    let result = log.append(&dummy_event("test")).unwrap();
+    assert_eq!(result.start_offset, 0);
 
     let events: Vec<_> = log
         .read_from(0)

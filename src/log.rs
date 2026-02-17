@@ -11,6 +11,21 @@ use std::path::{Path, PathBuf};
 /// Boxed iterator over `(Event, line_hash)` pairs from `read_full()`.
 type FullEventIter = Box<dyn Iterator<Item = io::Result<(Event, String)>>>;
 
+/// Result of a successful append operation.
+#[derive(Debug, Clone, PartialEq)]
+pub struct AppendResult {
+    /// Byte offset where the event line starts in `app.jsonl`.
+    pub start_offset: u64,
+
+    /// Byte offset after the trailing newline — the position where
+    /// the next event would begin.
+    pub end_offset: u64,
+
+    /// xxh64 hash of the serialized event line (hex-encoded, without
+    /// the trailing newline).
+    pub line_hash: String,
+}
+
 /// Exclusive writer for a single event log file.
 ///
 /// Owns the append file handle and manages log rotation at the file level.
@@ -50,27 +65,37 @@ impl EventWriter {
         })
     }
 
-    /// Append an event to the log. Returns the byte offset where the event starts.
+    /// Append an event to the log.
     ///
+    /// Returns an [`AppendResult`] with the start offset, end offset, and line hash.
     /// Does not trigger auto-rotation. For auto-rotation support, use [`EventLog`].
-    pub fn append(&mut self, event: &Event) -> io::Result<u64> {
-        let (offset, _) = self.append_raw(event)?;
-        Ok(offset)
+    pub fn append(&mut self, event: &Event) -> io::Result<AppendResult> {
+        let (result, _) = self.append_raw(event)?;
+        Ok(result)
     }
 
     /// Append an event and indicate whether rotation is needed.
     ///
-    /// Returns `(offset, needs_rotate)`.
-    pub(crate) fn append_raw(&mut self, event: &Event) -> io::Result<(u64, bool)> {
-        let offset = self.file.seek(SeekFrom::End(0))?;
+    /// Returns `(AppendResult, needs_rotate)`.
+    pub(crate) fn append_raw(&mut self, event: &Event) -> io::Result<(AppendResult, bool)> {
+        let start_offset = self.file.seek(SeekFrom::End(0))?;
         let json = serde_json::to_string(event)
             .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+        let hash = line_hash(json.as_bytes());
         writeln!(self.file, "{json}")?;
         self.file.sync_data()?;
+        let end_offset = start_offset + json.len() as u64 + 1; // +1 for '\n'
 
         let needs_rotate =
             self.max_log_size > 0 && self.active_log_size()? >= self.max_log_size;
-        Ok((offset, needs_rotate))
+        Ok((
+            AppendResult {
+                start_offset,
+                end_offset,
+                line_hash: hash,
+            },
+            needs_rotate,
+        ))
     }
 
     /// Manually trigger log rotation.
@@ -423,14 +448,15 @@ impl EventLog {
     /// Append an event to the active log.
     ///
     /// Serializes the event as a single JSON line, appends it to `app.jsonl`,
-    /// and flushes to disk. Returns the byte offset where the event starts.
+    /// and flushes to disk. Returns an [`AppendResult`] with the start offset,
+    /// end offset, and line hash.
     /// May trigger auto-rotation if `max_log_size` is configured and exceeded.
-    pub fn append(&mut self, event: &Event) -> io::Result<u64> {
-        let (offset, needs_rotate) = self.writer.append_raw(event)?;
+    pub fn append(&mut self, event: &Event) -> io::Result<AppendResult> {
+        let (result, needs_rotate) = self.writer.append_raw(event)?;
         if needs_rotate {
             self.rotate()?;
         }
-        Ok(offset)
+        Ok(result)
     }
 
     /// Read events from the active log starting at the given byte offset.
