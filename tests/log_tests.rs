@@ -26,9 +26,12 @@ fn test_open_existing_directory() {
     let dir = tempdir().unwrap();
     let data_dir = dir.path().join("data");
 
-    let _log1 = EventLog::open(&data_dir).unwrap();
+    {
+        let _log1 = EventLog::open(&data_dir).unwrap();
+        // log1 dropped here, releasing the lock
+    }
     let _log2 = EventLog::open(&data_dir).unwrap();
-    // No error on second open
+    // No error on second open after first is dropped
 }
 
 #[test]

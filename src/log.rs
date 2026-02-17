@@ -1,6 +1,7 @@
 use crate::archive;
 use crate::event::Event;
 use crate::view::{ReduceFn, View, ViewOps};
+use fs2::FileExt;
 use serde::de::DeserializeOwned;
 use serde::Serialize;
 use std::collections::HashMap;
@@ -10,6 +11,20 @@ use std::path::{Path, PathBuf};
 
 /// Boxed iterator over `(Event, line_hash)` pairs from `read_full()`.
 type FullEventIter = Box<dyn Iterator<Item = io::Result<(Event, String)>>>;
+
+/// Controls file locking behavior for an [`EventWriter`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum LockMode {
+    /// Acquire an exclusive advisory lock on `app.jsonl`.
+    /// Prevents other processes from opening a writer on the same file.
+    /// This is the default.
+    #[default]
+    Flock,
+
+    /// No locking. Use when you know only one process accesses the log,
+    /// or in test scenarios where multiple writers are intentionally used.
+    None,
+}
 
 /// Conflict details when a conditional append fails.
 #[derive(Debug, Clone, PartialEq)]
@@ -95,8 +110,19 @@ impl EventWriter {
     /// Open or create an event log directory for writing.
     ///
     /// Creates `dir/`, `dir/views/`, and `dir/app.jsonl` if they don't exist.
-    /// Opens `app.jsonl` in append mode.
+    /// Opens `app.jsonl` in append mode and acquires an exclusive advisory lock.
     pub fn open(dir: impl AsRef<Path>) -> io::Result<Self> {
+        Self::open_with_lock(dir, LockMode::Flock)
+    }
+
+    /// Open or create an event log directory with an explicit lock mode.
+    ///
+    /// With [`LockMode::Flock`], acquires an exclusive advisory lock on
+    /// `app.jsonl`. If another writer holds the lock, returns an error
+    /// immediately (non-blocking).
+    ///
+    /// With [`LockMode::None`], no lock is acquired.
+    pub fn open_with_lock(dir: impl AsRef<Path>, lock: LockMode) -> io::Result<Self> {
         let dir = dir.as_ref().to_path_buf();
         let views_dir = dir.join("views");
         let log_path = dir.join("app.jsonl");
@@ -108,6 +134,18 @@ impl EventWriter {
             .create(true)
             .append(true)
             .open(&log_path)?;
+
+        if lock == LockMode::Flock {
+            file.try_lock_exclusive().map_err(|e| {
+                io::Error::new(
+                    io::ErrorKind::AlreadyExists,
+                    format!(
+                        "another writer holds the lock on {}: {e}",
+                        log_path.display()
+                    ),
+                )
+            })?;
+        }
 
         Ok(EventWriter {
             file,
@@ -462,6 +500,7 @@ type ViewFactory = Box<dyn FnOnce(&Path) -> Box<dyn ViewOps>>;
 pub struct EventLogBuilder {
     dir: PathBuf,
     max_log_size: u64,
+    lock_mode: LockMode,
     view_factories: Vec<ViewFactory>,
 }
 
@@ -470,6 +509,12 @@ impl EventLogBuilder {
     /// A value of 0 (the default) disables auto-rotation.
     pub fn max_log_size(mut self, bytes: u64) -> Self {
         self.max_log_size = bytes;
+        self
+    }
+
+    /// Set the file locking mode. Default is [`LockMode::Flock`].
+    pub fn lock_mode(mut self, mode: LockMode) -> Self {
+        self.lock_mode = mode;
         self
     }
 
@@ -490,7 +535,7 @@ impl EventLogBuilder {
     /// Creates the directory structure, initializes all registered views,
     /// and performs auto-rotation if the active log exceeds `max_log_size`.
     pub fn open(self) -> io::Result<EventLog> {
-        let mut writer = EventWriter::open(&self.dir)?;
+        let mut writer = EventWriter::open_with_lock(&self.dir, self.lock_mode)?;
         writer.set_max_log_size(self.max_log_size);
         let reader = writer.reader();
 
@@ -542,6 +587,7 @@ impl EventLog {
         EventLogBuilder {
             dir: dir.as_ref().to_path_buf(),
             max_log_size: 0,
+            lock_mode: LockMode::default(),
             view_factories: Vec::new(),
         }
     }

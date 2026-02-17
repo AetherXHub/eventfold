@@ -25,15 +25,16 @@ fn test_valid_snapshot_accepted() {
 #[test]
 fn test_offset_beyond_eof() {
     let dir = tempdir().unwrap();
-    let mut log = EventLog::open(dir.path()).unwrap();
-    append_n(&mut log, 5);
 
-    // Create a view and refresh to generate snapshot
-    {
+    let views_dir = {
+        let mut log = EventLog::open(dir.path()).unwrap();
+        append_n(&mut log, 5);
+
         let mut view: View<u64> = View::new("counter", counter_reducer, log.views_dir());
         view.refresh(&log.reader()).unwrap();
         assert_eq!(*view.state(), 5);
-    }
+        log.views_dir().to_path_buf()
+    };
 
     // Truncate app.jsonl to 10 bytes (less than snapshot offset)
     let log_path = dir.path().join("app.jsonl");
@@ -46,7 +47,7 @@ fn test_offset_beyond_eof() {
 
     // Reopen log and create fresh view — should detect offset beyond EOF and rebuild
     let log = EventLog::open(dir.path()).unwrap();
-    let mut view: View<u64> = View::new("counter", counter_reducer, log.views_dir());
+    let mut view: View<u64> = View::new("counter", counter_reducer, &views_dir);
     let state = view.refresh(&log.reader()).unwrap();
     // The truncated file has partial data; state depends on what's parseable
     // The key assertion: it doesn't panic or return the old state of 5
@@ -56,21 +57,16 @@ fn test_offset_beyond_eof() {
 #[test]
 fn test_hash_mismatch() {
     let dir = tempdir().unwrap();
-    let mut log = EventLog::open(dir.path()).unwrap();
-    append_n(&mut log, 5);
 
-    // Create view and refresh
-    {
+    let views_dir = {
+        let mut log = EventLog::open(dir.path()).unwrap();
+        append_n(&mut log, 5);
+
         let mut view: View<u64> = View::new("counter", counter_reducer, log.views_dir());
         view.refresh(&log.reader()).unwrap();
         assert_eq!(*view.state(), 5);
-    }
-
-    // Read the snapshot to get the offset
-    let snapshot_path = log.views_dir().join("counter.snapshot.json");
-    let snap_content = fs::read_to_string(&snapshot_path).unwrap();
-    let snap: serde_json::Value = serde_json::from_str(&snap_content).unwrap();
-    let _offset = snap["offset"].as_u64().unwrap();
+        log.views_dir().to_path_buf()
+    };
 
     // Overwrite the last line before the offset in app.jsonl
     // Read the file, modify the last complete line, write back
@@ -91,7 +87,7 @@ fn test_hash_mismatch() {
 
     // Reopen log and create fresh view — should detect hash mismatch and rebuild
     let log = EventLog::open(dir.path()).unwrap();
-    let mut view: View<u64> = View::new("counter", counter_reducer, log.views_dir());
+    let mut view: View<u64> = View::new("counter", counter_reducer, &views_dir);
     let state = view.refresh(&log.reader()).unwrap();
     // After rebuild from modified log, should have 5 events (the content is still 5 lines)
     assert_eq!(*state, 5);
@@ -100,15 +96,16 @@ fn test_hash_mismatch() {
 #[test]
 fn test_empty_log_nonzero_offset() {
     let dir = tempdir().unwrap();
-    let mut log = EventLog::open(dir.path()).unwrap();
-    append_n(&mut log, 5);
 
-    // Create view and refresh
-    {
+    let views_dir = {
+        let mut log = EventLog::open(dir.path()).unwrap();
+        append_n(&mut log, 5);
+
         let mut view: View<u64> = View::new("counter", counter_reducer, log.views_dir());
         view.refresh(&log.reader()).unwrap();
         assert_eq!(*view.state(), 5);
-    }
+        log.views_dir().to_path_buf()
+    };
 
     // Truncate app.jsonl to empty
     let log_path = dir.path().join("app.jsonl");
@@ -116,7 +113,7 @@ fn test_empty_log_nonzero_offset() {
 
     // Reopen log and create fresh view — should detect and rebuild (empty = default)
     let log = EventLog::open(dir.path()).unwrap();
-    let mut view: View<u64> = View::new("counter", counter_reducer, log.views_dir());
+    let mut view: View<u64> = View::new("counter", counter_reducer, &views_dir);
     let state = view.refresh(&log.reader()).unwrap();
     assert_eq!(*state, 0); // empty log → default state
 }
@@ -174,15 +171,16 @@ fn test_rebuild_correctness_after_integrity_failure() {
 #[test]
 fn test_manual_log_edit_detected() {
     let dir = tempdir().unwrap();
-    let mut log = EventLog::open(dir.path()).unwrap();
-    append_n(&mut log, 3);
 
-    // Create view and refresh
-    {
+    let views_dir = {
+        let mut log = EventLog::open(dir.path()).unwrap();
+        append_n(&mut log, 3);
+
         let mut view: View<u64> = View::new("counter", counter_reducer, log.views_dir());
         view.refresh(&log.reader()).unwrap();
         assert_eq!(*view.state(), 3);
-    }
+        log.views_dir().to_path_buf()
+    };
 
     // Insert an extra line in the middle of app.jsonl
     let log_path = dir.path().join("app.jsonl");
@@ -204,7 +202,7 @@ fn test_manual_log_edit_detected() {
 
     // Reopen log and create fresh view — should detect hash mismatch
     let log = EventLog::open(dir.path()).unwrap();
-    let mut view: View<u64> = View::new("counter", counter_reducer, log.views_dir());
+    let mut view: View<u64> = View::new("counter", counter_reducer, &views_dir);
     let state = view.refresh(&log.reader()).unwrap();
     // After rebuild from modified log with 4 lines, should count 4
     assert_eq!(*state, 4);
