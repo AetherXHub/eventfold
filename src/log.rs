@@ -55,7 +55,6 @@ pub enum WaitResult {
 
 /// Conflict details when a conditional append fails.
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[non_exhaustive]
 pub struct AppendConflict {
     /// The offset the caller expected the log to be at.
     pub expected_offset: u64,
@@ -101,7 +100,6 @@ pub enum ConditionalAppendError {
 /// # Ok::<(), std::io::Error>(())
 /// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[non_exhaustive]
 pub struct AppendResult {
     /// Byte offset where the event line starts in `app.jsonl`.
     pub start_offset: u64,

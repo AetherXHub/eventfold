@@ -32,7 +32,6 @@ use std::time::{SystemTime, UNIX_EPOCH};
 /// assert_eq!(event.actor, Some("user_42".to_string()));
 /// ```
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-#[non_exhaustive]
 pub struct Event {
     /// The event type identifier (e.g. `"todo_added"`, `"user_clicked"`).
     ///

@@ -23,7 +23,6 @@ use std::path::Path;
 /// }
 /// ```
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[non_exhaustive]
 pub struct Snapshot<S> {
     /// The derived state at the time of the snapshot.
     pub state: S,
