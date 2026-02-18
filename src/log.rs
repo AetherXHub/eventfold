@@ -69,42 +69,19 @@ pub struct AppendConflict {
 }
 
 /// Error type for conditional append operations.
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
 pub enum ConditionalAppendError {
     /// The log state didn't match expectations — no write occurred.
+    #[error(
+        "conditional append conflict: expected offset {} (hash {:?}), \
+         actual offset {} (hash {:?})",
+        .0.expected_offset, .0.expected_hash, .0.actual_offset, .0.actual_hash
+    )]
     Conflict(AppendConflict),
+
     /// An I/O error occurred during the check or write.
-    Io(io::Error),
-}
-
-impl std::fmt::Display for ConditionalAppendError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            ConditionalAppendError::Conflict(c) => {
-                write!(
-                    f,
-                    "conditional append conflict: expected offset {} (hash {:?}), actual offset {} (hash {:?})",
-                    c.expected_offset, c.expected_hash, c.actual_offset, c.actual_hash
-                )
-            }
-            ConditionalAppendError::Io(e) => write!(f, "I/O error: {e}"),
-        }
-    }
-}
-
-impl std::error::Error for ConditionalAppendError {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        match self {
-            ConditionalAppendError::Io(e) => Some(e),
-            ConditionalAppendError::Conflict(_) => None,
-        }
-    }
-}
-
-impl From<io::Error> for ConditionalAppendError {
-    fn from(e: io::Error) -> Self {
-        ConditionalAppendError::Io(e)
-    }
+    #[error("I/O error: {0}")]
+    Io(#[from] io::Error),
 }
 
 /// Result of a successful append operation.
@@ -434,7 +411,9 @@ impl EventWriter {
     /// Panics if the log path has no parent directory (should never occur
     /// because the path is always constructed as `dir/app.jsonl`).
     pub fn dir(&self) -> &Path {
-        self.log_path.parent().unwrap()
+        self.log_path
+            .parent()
+            .expect("log_path always has a parent directory")
     }
 
     /// Returns the path to the active log file.

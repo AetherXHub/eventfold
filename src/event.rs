@@ -95,7 +95,7 @@ impl Event {
     pub fn new(event_type: &str, data: Value) -> Self {
         let ts = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .unwrap()
+            .expect("system clock is before Unix epoch")
             .as_secs();
         Event {
             event_type: event_type.to_string(),

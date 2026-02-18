@@ -30,10 +30,11 @@ pub fn append_compressed_frame(archive_path: &Path, data: &[u8]) -> io::Result<(
 /// Returns an error if opening the file or initializing the zstd
 /// decoder fails.
 pub fn open_archive_reader(archive_path: &Path) -> io::Result<Option<Box<dyn BufRead>>> {
-    if !archive_path.exists() {
-        return Ok(None);
-    }
-    let file = File::open(archive_path)?;
+    let file = match File::open(archive_path) {
+        Ok(f) => f,
+        Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(None),
+        Err(e) => return Err(e),
+    };
     let decoder = zstd::Decoder::new(file)?;
     Ok(Some(Box::new(BufReader::new(decoder))))
 }

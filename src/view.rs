@@ -169,7 +169,7 @@ where
                 match self.verify_snapshot(reader)? {
                     SnapshotValidity::Valid => {}
                     SnapshotValidity::OffsetBeyondEof => {
-                        eprintln!(
+                        log::warn!(
                             "eventfold: view '{}': snapshot offset {} is beyond log EOF, rebuilding",
                             self.name, self.offset
                         );
@@ -179,7 +179,7 @@ where
                         self.needs_full_replay = true;
                     }
                     SnapshotValidity::HashMismatch => {
-                        eprintln!(
+                        log::warn!(
                             "eventfold: view '{}': snapshot hash mismatch, rebuilding",
                             self.name
                         );

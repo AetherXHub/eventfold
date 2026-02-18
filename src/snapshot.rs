@@ -22,7 +22,7 @@ use std::path::Path;
 ///   "hash": "a3f2e1b09c4d..."
 /// }
 /// ```
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[non_exhaustive]
 pub struct Snapshot<S> {
     /// The derived state at the time of the snapshot.
